@@ -1,92 +1,104 @@
-# Twitter Monitor
+# Twitter (X.com) Monitor 🦅
 
-Monitor the `following`, `tweet`, ~~`like`~~ and `profile` of a Twitter user and send the changes to the telegram channel.
+A lightweight, robust, and headless Twitter (X.com) monitoring bot built with Python. This tool continuously tracks specific X accounts and sends real-time notifications to Telegram, Discord, or CQHttp whenever the target user posts a new tweet, updates their profile, follows someone new, or likes a post.
 
-Data is crawled from Twitter web’s GraphQL API.
+No browser emulation (like Selenium) is required. It queries the internal X GraphQL API directly, making it extremely fast and memory efficient (capable of running on 512MB RAM Linux VPS).
 
-(Due to the unstable return results of Twitter Web's `following` API, accounts with more than 100 followings are not recommended to use `following` monitor.)
+## 🌟 Key Features
 
-## Deployed channel sample
+*   **Multi-Target Monitoring**: Track an unlimited number of accounts simultaneously.
+*   **Comprehensive Tracking**:
+    *   **Tweets**: Detects new tweets, retweets, and quotes (with image/video media parsing).
+    *   **Profile**: Alerts on changes to Name, Bio, Avatar, Banner, Location, and Website.
+    *   **Following**: Notifies when the target follows or unfollows other users.
+    *   **Likes**: Detects new likes from the target user.
+*   **Headless & Lightweight**: Uses raw HTTP requests to simulate X.com GraphQL API calls. No heavy browsers needed.
+*   **State Persistence**: Saves tracking state (`state/state.json`) so you can run it via Linux `cron` (e.g., once an hour) without losing tracking history.
+*   **Anti-Ban & Token Rotation**: Supports multiple authentication accounts and round-robin token rotation to bypass rate limits.
+*   **Sign-out Detection**: Automatically detects if your auth account token expires or gets signed out and sends an emergency alert to your Telegram.
+*   **Centralized Configuration**: Everything is managed cleanly in a single `config/config.json` file.
+*   **Rotating Logs**: Logs are safely rotated (max 10MB, 5 backups) preventing disk space issues.
 
-https://t.me/twitter_monitor_menu
+---
 
-## Usage
+## 🛠️ Installation
 
-### Setup
-
-(Requires **python >= 3.10**)
-
-Clone code and install dependent pip packages
-
-```bash
-git clone https://github.com/ionic-bond/twitter-monitor.git
-cd twitter-monitor
-pip3 install -r ./requirements.txt
-```
-
-### Prepare required tokens
-
-- Create a Telegram bot and get it's token:
-
-  https://t.me/BotFather
-
-- Unofficial Twitter account auth:
-
-    You need to prepare one or more normal twitter accounts, and then use the following command to generate auth cookies
-
+1.  **Clone the repository:**
     ```bash
-    python3 main.py generate-auth-cookie --username "{username}" --password "{password}"
+    git clone https://github.com/kaitobui25/x-twitter-monitor.git
+    cd x-twitter-monitor
     ```
 
-### Fill in config
+2.  **Install dependencies:**
+    (Requires Python 3.10+)
+    ```bash
+    pip install -r requirements.txt
+    ```
 
-- First make a copy from the config templates
+3.  **Generate X.com Authentication Cookie:**
+    You need a dummy/secondary X.com account to query the API.
+    ```bash
+    python main.py login --username YOUR_X_USERNAME --password YOUR_X_PASSWORD
+    ```
+    *Note: If your account has 2FA, the CLI will prompt you to re-run the command with the `--confirmation_code` flag.*
 
-  ```bash
-  cp ./config/token.json.template ./config/token.json
-  cp ./config/monitoring.json.template ./config/monitoring.json
-  ```
+4.  **Configure the Bot:**
+    Copy the configuration file or modify the default one located at `config/config.json`. 
+    See the [CONFIG_GUIDE.md](CONFIG_GUIDE.md) (Vietnamese) for detailed setup instructions regarding Telegram Bots, Targets, and Intervals.
 
-- Edit `config/token.json`
+---
 
-  1. Fill in `telegram_bot_token`
+## 🚀 Usage
 
-  2. Fill in `twitter_auth_username_list` according to your prepared Twitter account auth
+The project features a clean CLI interface. 
 
-  3. Now you can test whether the tokens can be used by
-      ```bash
-      python3 main.py check-tokens
-      ```
-
-- Edit `config/monitoring.json`
-
-  (You need to fill in some telegram chat id here, you can get them from https://t.me/userinfobot and https://t.me/myidbot)
-
-  1. If you need to view monitor health information (starting summary, daily summary, alert), fill in `maintainer_chat_id`
-
-  2. Fill in one or more user to `monitoring_user_list`, and their notification telegram chat id, weight, which monitors to enable. The greater the weight, the higher the query frequency. The **profile monitor** is forced to enable (because it triggers the other 3 monitors), and the other 3 monitors are free to choose whether to enable or not
-
-  3. You can check if your telegram token and chat id are correct by
-      ```bash
-      python3 main.py check-tokens --telegram_chat_id {your_chat_id}
-      ```
-
-### Run
-
+### 1. Run Continuously (Daemon Mode)
+This runs the bot in the foreground. It will execute scans based on the `scan_interval_seconds` defined in your config.
 ```bash
-python3 main.py run
+python main.py run
 ```
-|         Flag          | Default |                        Description                        |
-| :-------------------: | :-----: | :-------------------------------------------------------: |
-|      --interval       |   15    |                   Monitor run interval                    |
-|       --confirm       |  False  |     Confirm with the maintainer during initialization     |
-| --listen_exit_command |  False  | Liten the "exit" command from telegram maintainer chat id |
-| --send_daily_summary  |  False  |         Send daily summary to telegram maintainer         |
 
-## Contact me
+### 2. Run Once (Cronjob Mode)
+Perfect for running the bot via a Linux `cron` job to save CPU resources. The bot will scan all targets exactly once, save the new state to `state/state.json`, wait for notifications to send, and then gracefully exit.
+```bash
+python main.py run --once
+```
 
-Telegram: [@ionic_bond](https://t.me/ionic_bond)
+*Example crontab (runs every hour at minute 0):*
+```bash
+0 * * * * cd /path/to/twitter-monitor && python3 main.py run --once
+```
 
-## Donate
+### 3. Check Token Health
+Verify if your X.com authentication cookies are still valid and active:
+```bash
+python main.py check-tokens
+```
 
-[PayPal Donate](https://www.paypal.com/donate/?hosted_button_id=D5DRBK9BL6DUA) or [PayPal](https://paypal.me/ionicbond3)
+---
+
+## 📂 Directory Structure
+
+```text
+twitter-monitor/
+├── config/
+│   └── config.json          # Main configuration file
+├── cookies/
+│   └── <username>.json      # Saved X.com auth sessions
+├── log/                     
+│   ├── main.log             # System-wide warnings/errors
+│   └── monitors/            # Individual tracking logs per target
+├── src/
+│   ├── core/                # GraphQL API, Watcher, Login flow
+│   ├── monitors/            # Tweet, Profile, Like, Following monitors
+│   ├── notifiers/           # Telegram, Discord, CQHttp integrations
+│   └── utils/               # Parsers, State manager, Logger
+├── state/
+│   └── state.json           # Persisted memory for run-once mode
+├── main.py                  # CLI Entry point
+└── CONFIG_GUIDE.md          # Detailed configuration documentation
+```
+
+---
+
+

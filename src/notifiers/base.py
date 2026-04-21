@@ -1,19 +1,21 @@
+"""
+Base classes for all notifiers.
+"""
 import queue
 import threading
 from abc import ABC, abstractmethod
 from typing import List, Union
 
-from status_tracker import StatusTracker
-from utils import check_initialized
+from src.utils.parser import check_initialized
+from src.utils.tracker import StatusTracker
 
 
 class Message:
-
     def __init__(self,
                  text: str,
                  photo_url_list: Union[List[str], None] = None,
                  video_url_list: Union[List[str], None] = None):
-        self.text = text
+        self.text           = text
         self.photo_url_list = photo_url_list
         self.video_url_list = video_url_list
 
@@ -21,8 +23,8 @@ class Message:
 class NotifierBase(ABC):
     initialized = False
 
-    def __new__(self):
-        raise Exception('Do not instantiate this class!')
+    def __new__(cls):
+        raise Exception('Do not instantiate {}!'.format(cls.__name__))
 
     @classmethod
     @abstractmethod
@@ -30,7 +32,7 @@ class NotifierBase(ABC):
         cls.message_queue = queue.SimpleQueue()
         StatusTracker.set_notifier_status(cls.notifier_name, True)
         cls.initialized = True
-        cls.work_start()
+        cls._start_worker()
 
     @classmethod
     @abstractmethod
@@ -40,21 +42,20 @@ class NotifierBase(ABC):
 
     @classmethod
     @check_initialized
-    def _work(cls):
+    def _worker(cls):
         while True:
-            message = cls.message_queue.get()
+            msg = cls.message_queue.get()
             try:
                 StatusTracker.set_notifier_status(cls.notifier_name, False)
-                cls.send_message(message)
+                cls.send_message(msg)
                 StatusTracker.set_notifier_status(cls.notifier_name, True)
             except Exception as e:
-                print(e)
-                cls.logger.error(e)
+                cls.logger.error('[{}] send failed: {}'.format(cls.notifier_name, e))
 
     @classmethod
     @check_initialized
-    def work_start(cls):
-        threading.Thread(target=cls._work, daemon=True).start()
+    def _start_worker(cls):
+        threading.Thread(target=cls._worker, daemon=True, name=cls.notifier_name + '-worker').start()
 
     @classmethod
     @check_initialized
