@@ -4,6 +4,8 @@ A lightweight, robust, and headless Twitter (X.com) monitoring bot built with Py
 
 No browser emulation (like Selenium) is required. It queries the internal X GraphQL API directly, making it extremely fast and memory efficient (capable of running on 512MB RAM Linux VPS).
 
+> **Python 3.12+ compatible.** Telegram notifications are sent via direct HTTP calls to the Bot API (using `httpx`) — no `python-telegram-bot` SDK required, eliminating the historical `APScheduler` version conflict.
+
 ## 🌟 Key Features
 
 *   **Multi-Target Monitoring**: Track an unlimited number of accounts simultaneously.
@@ -30,10 +32,12 @@ No browser emulation (like Selenium) is required. It queries the internal X Grap
     ```
 
 2.  **Install dependencies:**
-    (Requires Python 3.10+)
+    (Requires Python 3.12+)
     ```bash
     pip install -r requirements.txt
     ```
+
+    Key dependencies: `httpx`, `APScheduler>=3.10`, `XClientTransaction`, `requests`, `beautifulsoup4`.
 
 3.  **Generate X.com Authentication Cookie:**
     You need a dummy/secondary X.com account to query the API.

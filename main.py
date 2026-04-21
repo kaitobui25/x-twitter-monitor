@@ -8,15 +8,6 @@ Usage:
   python main.py login --username X --password Y
 """
 import sys
-import types
-
-# ---- Python 3.13+ imghdr compatibility shim ----
-try:
-    import imghdr
-except ImportError:
-    _m = types.ModuleType('imghdr')
-    _m.what = lambda *a, **k: None
-    sys.modules['imghdr'] = _m
 
 import json
 import logging
