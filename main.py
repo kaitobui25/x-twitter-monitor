@@ -232,13 +232,12 @@ def run(config, cookies, logdir, once):
                                    mtype, username, e))
                 continue
 
-            if monitor_cls is ProfileMonitor:
-                scheduler.add_job(
-                    monitors[mtype][title].watch,
-                    trigger='interval', seconds=scan_interval,
-                    id='profile-{}'.format(title),
-                    max_instances=1,
-                )
+            scheduler.add_job(
+                monitors[mtype][title].watch,
+                trigger='interval', seconds=scan_interval,
+                id='{}-{}'.format(mtype, title),
+                max_instances=1,
+            )
 
     MonitorManager.init(monitors=monitors)
 
@@ -285,9 +284,18 @@ def run(config, cookies, logdir, once):
 
     if once:
         print('[OK] Running ONE scan (--once).')
-        for title, monitor in monitors[ProfileMonitor.monitor_type].items():
-            monitor.watch()
-        
+        # Chạy tất cả monitor theo thứ tự ưu tiên:
+        # Tweet trước (chứa AI extraction), rồi Like, Following, cuối cùng Profile.
+        run_order = [
+            TweetMonitor.monitor_type,
+            LikeMonitor.monitor_type,
+            FollowingMonitor.monitor_type,
+            ProfileMonitor.monitor_type,
+        ]
+        for mtype in run_order:
+            for title, monitor in monitors.get(mtype, {}).items():
+                monitor.watch()
+
         # Wait a bit for async notifier queues to drain
         time.sleep(10)
         print('[OK] Scan complete. Exiting.')
