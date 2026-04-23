@@ -58,7 +58,7 @@ Có thể thêm **nhiều tài khoản** để tránh rate limit:
 ---
 
 ## 3. Thay đổi khoảng thời gian quét
-
+Nếu chạy trên vps thì chỉ cần crontab là được không cần backgound process scan_interval_seconds chạy ngầm này
 ```json
 "schedule": {
     "scan_interval_seconds": 900
