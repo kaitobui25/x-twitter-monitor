@@ -8,10 +8,15 @@ No browser emulation (like Selenium) is required. It queries the internal X Grap
 
 ## 🌟 Key Features
 
-*   **Multi-Target Monitoring**: Track an unlimited number of accounts simultaneously.
+*   **Multi-Target Monitoring**: Theo dõi không giới hạn số lượng tài khoản cùng lúc.
+*   **🧠 AI Chart Extraction (MỚI)**: Tự động tải ảnh biểu đồ giao dịch từ Tweet và sử dụng **Gemini AI** để nhận diện, bóc tách cấu trúc Setup (Entry, Stoploss, Take Profit). Kết quả trả về file JSON chuẩn.
+*   **📂 Quản lý dữ liệu thông minh theo ngày**: Ảnh và dữ liệu phân tích JSON được lưu tự động vào từng thư mục theo đối tượng và tách riêng theo ngày, đánh số thứ tự tuần tự không ghi đè (VD: `follower/BangXBT/img/2026-04-24/2026-04-24-001.jpg`).
+*   **⏱️ Anti-Rate Limit & Round-Robin API**: 
+    - Cho phép nạp Pool chứa nhiều Gemini API Keys (`key1`, `key2`...). 
+    - Bot tự động xoay vòng key và bắt buộc áp dụng khoảng **chờ 2 phút (Global Delay)** giữa mỗi lần gửi ảnh lên AI (bất kể ảnh ở tweet nào). Chống triệt để việc bị khoá tài khoản do spam API.
 *   **Comprehensive Tracking**:
-    *   **Tweets**: Detects new tweets, retweets, and quotes (with image/video media parsing).
-    *   **Profile**: Alerts on changes to Name, Bio, Avatar, Banner, Location, and Website.
+    *   **Tweets**: Phát hiện tweet mới, retweet, quote (kèm chức năng trích xuất hình ảnh/video).
+    *   **Profile**: Báo cáo sự thay đổi Tên, Tiểu sử, Avatar, Banner...
     *   **Following**: Notifies when the target follows or unfollows other users.
     *   **Likes**: Detects new likes from the target user.
 *   **Headless & Lightweight**: Uses raw HTTP requests to simulate X.com GraphQL API calls. No heavy browsers needed.
@@ -63,15 +68,21 @@ python main.py run
 ```
 
 ### 2. Run Once (Cronjob Mode)
-Perfect for running the bot via a Linux `cron` job to save CPU resources. The bot will scan all targets exactly once, save the new state to `state/state.json`, wait for notifications to send, and then gracefully exit.
-```bash
-python main.py run --once
-```
+Chế độ này tối ưu nhất để chạy bot định kỳ qua `cron` trên Linux nhằm tiết kiệm tài nguyên CPU/RAM. Bot sẽ quét tất cả các mục tiêu chính xác 1 lần, lưu trạng thái và tự động thoát.
 
-*Example crontab (runs every hour at minute 0):*
-```bash
-0 * * * * cd /path/to/twitter-monitor && python3 main.py run --once
-```
+Nên sử dụng file `cronjob.sh` (đã được cấu hình để tự động nhận diện Virtual Environment):
+1. **Cấp quyền thực thi:**
+   ```bash
+   chmod +x cronjob.sh
+   ```
+2. **Cấu hình Crontab:**
+   ```bash
+   crontab -e
+   ```
+3. **Thêm dòng sau vào cuối file crontab (ví dụ chạy mỗi 15 phút):**
+   ```bash
+   */15 * * * * /home/ubuntu/x-twitter-monitor/cronjob.sh >/dev/null 2>&1
+   ```
 
 ### 3. Check Token Health
 Verify if your X.com authentication cookies are still valid and active:
@@ -89,6 +100,10 @@ twitter-monitor/
 │   └── config.json          # Main configuration file
 ├── cookies/
 │   └── <username>.json      # Saved X.com auth sessions
+├── follower/                # Thư mục chứa dữ liệu tự động tải về từ Tweet
+│   └── <username>/          # Dữ liệu phân loại theo từng tài khoản theo dõi
+│       ├── img/             # Ảnh gốc (phân tách theo thư mục ngày YYYY-MM-DD)
+│       └── json/            # Dữ liệu JSON Gemini phân tích (phân tách theo thư mục ngày YYYY-MM-DD)
 ├── log/                     
 │   ├── main.log             # System-wide warnings/errors
 │   └── monitors/            # Individual tracking logs per target
@@ -96,7 +111,7 @@ twitter-monitor/
 │   ├── core/                # GraphQL API, Watcher, Login flow
 │   ├── monitors/            # Tweet, Profile, Like, Following monitors
 │   ├── notifiers/           # Telegram, Discord, CQHttp integrations
-│   └── utils/               # Parsers, State manager, Logger
+│   └── utils/               # Parsers, State manager, Logger, Gemini Extractor
 ├── state/
 │   └── state.json           # Persisted memory for run-once mode
 ├── main.py                  # CLI Entry point

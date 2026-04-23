@@ -35,6 +35,7 @@ from src.notifiers.telegram import TelegramMessage, TelegramNotifier, send_alert
 from src.utils.logger       import setup_root, get_logger
 from src.utils.tracker      import StatusTracker
 from src.utils.state        import StateManager
+from src.utils.gemini_extractor import init_key_pool
 
 # ---------------------------------------------------------------------------
 _ROOT = sys.path[0]
@@ -76,6 +77,7 @@ def _build_token_config(cfg: dict) -> dict:
         'telegram_bot_token':         cfg['telegram']['bot_token'],
         'twitter_auth_username_list': [a['username'] for a in cfg['twitter_accounts']],
         'cqhttp_access_token':        cfg.get('cqhttp', {}).get('access_token', ''),
+        'gemini_api_keys':            cfg.get('gemini_api_keys', []),
     }
 
 
@@ -156,12 +158,18 @@ def run(config, cookies, logdir, once):
     setup_root(log_dir)
     StateManager.init(os.path.join(_ROOT, 'state'))
 
+    # ----- Gemini key pool -----
+    gemini_keys = cfg.get('gemini_api_keys', {})
+    if gemini_keys:
+        init_key_pool(gemini_keys)
+
     get_logger('api',             log_dir)
     get_logger('status',          log_dir)
     get_logger('telegram',        log_dir)
     get_logger('cqhttp',          log_dir)
     get_logger('discord',         log_dir)
     get_logger('monitor-manager', log_dir)
+    get_logger('gemini-extractor', log_dir)
 
     main_logger = logging.getLogger('main')
 

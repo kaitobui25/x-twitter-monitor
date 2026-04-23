@@ -20,6 +20,7 @@ class MonitorBase(ABC):
         self.monitor_type = monitor_type
         self.username     = username
         self.title        = title
+        self.token_config = token_config  # store for subclass access (e.g. gemini_api_keys)
 
         logger_name  = '{}-{}'.format(title, monitor_type)
         self.logger  = logging.getLogger(logger_name)

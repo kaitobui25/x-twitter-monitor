@@ -118,6 +118,28 @@ Mỗi target có thể gửi thông báo đến **nhiều chat ID Telegram khác
 
 ---
 
+## 6. Cấu hình phân tích biểu đồ bằng AI (Gemini)
+
+Hệ thống có tính năng tự động tải ảnh từ tweet và đẩy qua **Gemini AI** để trích xuất tín hiệu giao dịch (thành file JSON).
+
+Thêm mảng cấu hình `gemini_api_keys` vào ngay đầu file `config.json` (chỉ định cấu trúc tên theo `key1`, `key2`,...):
+
+```json
+"gemini_api_keys": {
+    "key1": "AIzaSyA-xxxxxxxxxxxxxxxxxxxx",
+    "key2": "API_KEY_THU_HAI_NEU_CO"
+}
+```
+
+**📌 Cơ chế hoạt động của Bot AI:**
+- **Round-robin**: Nếu bạn cấu hình nhiều key, bot sẽ tự động xoay vòng lần lượt qua từng key mỗi khi phân tích ảnh để chia sẻ tải.
+- **Global Delay (Chống Rate Limit Tuyệt Đối)**: Bất kể ảnh thuộc tweet nào hay của đối tượng nào, cứ khi hệ thống cần phân tích từ tấm ảnh thứ 2 trở lên trong 1 phiên chạy, bot sẽ **TỰ ĐỘNG CHỜ NGỦ 2 PHÚT (120 giây)** trước khi gửi. Đảm bảo an toàn tuyệt đối trước giới hạn 429 Too Many Requests của Gemini.
+- **Lưu trữ thư mục theo ngày (Tự động)**:
+  - Ảnh tải về: `follower/<Tên_Đối_Tượng>/img/YYYY-MM-DD/YYYY-MM-DD-001.jpg`
+  - Dữ liệu JSON: `follower/<Tên_Đối_Tượng>/json/YYYY-MM-DD/YYYY-MM-DD-001.json`
+
+---
+
 ## Chạy hệ thống
 
 ```bash
