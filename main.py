@@ -172,16 +172,16 @@ def run(config, cookies, logdir, once):
 
     # ----- Startup message -----
     startup_text = (
-        '[STARTED] Twitter Monitor\n'
-        'Host: {}\n'
+        # '[STARTED] Twitter Monitor\n'
+        # 'Host: {}\n'
         'Targets: {}\n'
-        'Scan interval: {}s\n'
-        'Started at: {} UTC'
+        # 'Scan interval: {}s\n'
+        # 'Started at: {} UTC'
     ).format(
-        platform.node(),
+        # platform.node(),
         ', '.join(t.get('title', t['username']) for t in targets),
-        scan_interval,
-        datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
+        # scan_interval,
+        # datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
     )
     if maintainer_id:
         TelegramNotifier.put_message_into_queue(
