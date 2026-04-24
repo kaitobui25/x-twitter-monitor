@@ -18,28 +18,49 @@ Toàn bộ cài đặt nằm trong **một file duy nhất**: `config/config.jso
 
 ---
 
-## 1. Thay tài khoản X.com (auth account)
+## 1. Cấu hình tài khoản X.com (auth account)
 
-Tài khoản này dùng để **xác thực với X API** (không nhất thiết phải là tài khoản theo dõi).
+Tài khoản này dùng để **xác thực với X API** (không nhất thiết phải là tài khoản theo dõi). Do X.com thường xuyên chặn đăng nhập tự động, cách an toàn nhất là lấy cookie trực tiếp từ trình duyệt (nên dùng tài khoản phụ).
 
+Bot cần ít nhất 2 trường bắt buộc từ file cookie:
+- `auth_token`: Định danh phiên đăng nhập (Bắt buộc).
+- `ct0`: CSRF token để gọi API (Bắt buộc).
+
+Dưới đây là 2 cách tạo file cookie:
+
+### Cách 1: Lấy thủ công (Hiện đang dùng)
+1. Mở Chrome/Edge, đăng nhập vào `https://x.com`.
+2. Nhấn `F12` → Tab **Application** → **Cookies** → `https://x.com`.
+3. Tìm và copy giá trị của:
+   - `auth_token` (chuỗi dài ~40 ký tự hex)
+   - `ct0` (chuỗi dài ~160 ký tự hex)
+4. Tạo file `cookies/<username>.json` (ví dụ `cookies/dieu_do2.json`) với cấu trúc:
+```json
+{
+  "auth_token": "abcdef1234567890...",
+  "ct0": "abcdef1234567890...",
+  "twid": "u%3D123456789"
+}
+```
+
+### Cách 2: Export bằng Extension (Tham khảo thêm)
+1. Cài extension [Cookie-Editor](https://cookie-editor.com) (Chrome/Firefox).
+2. Vào `https://x.com` → Click icon extension → **Export** → **Export as JSON**.
+3. Chạy script chuyển đổi đã được chuẩn bị sẵn:
+```bash
+python src/test/convert_cookies.py <ten_tai_khoan>
+```
+*(Paste đoạn JSON vừa copy vào terminal khi được yêu cầu, tool sẽ tự tạo file `cookies/<ten_tai_khoan>.json`)*
+
+---
+
+Sau khi tạo xong file cookie, bạn khai báo tài khoản đó vào file cấu hình:
 ```json
 "twitter_accounts": [
     { "username": "ten_tai_khoan_cua_ban" }
 ]
 ```
-
-Sau đó chạy lệnh login để tạo cookie:
-```bash
-python main.py login --username ten_tai_khoan_cua_ban --password mat_khau_cua_ban
-```
-
-Có thể thêm **nhiều tài khoản** để tránh rate limit:
-```json
-"twitter_accounts": [
-    { "username": "account1" },
-    { "username": "account2" }
-]
-```
+*(Có thể khai báo nhiều tài khoản để tránh rate limit)*
 
 ---
 
