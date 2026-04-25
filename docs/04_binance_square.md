@@ -119,11 +119,38 @@ Lúc test tích hợp file ảnh với thuật toán tách biểu đồ (Gemini 
 - 👉 **Nguyên nhân:** Script test độc lập của tôi đã quên gọi hàm `init_key_pool(gemini_api_keys)` khiến module AI không có khóa để gọi Google API. Nó xử lý lỗi im lặng (fail-safe) trả về False.
 - 👉 **Cách khắc phục:** Bổ sung khởi tạo. Kết quả phân tích sau đó đạt mức hoàn hảo: Trích xuất thành công 13 chart, tự động vứt bỏ 7 ảnh rác (meme/pnl).
 
+### Khó khăn 4: Khác biệt môi trường Local và VPS (Lỗi ẩn `config.json`)
+Khi đưa lên VPS chạy thật, bot chỉ báo đang theo dõi mục tiêu cũ (BangXBT), hoàn toàn bỏ qua mục tiêu mới (Gem10x) dù code đã được cập nhật.
+- 👉 **Nguyên nhân:** File `config/config.json` chứa mã API Key nhạy cảm nên đã được liệt kê trong `.gitignore`. Khi thực hiện `git pull` trên VPS, file cấu hình mới (chứa `binance_targets`) không được tải xuống.
+- 👉 **Cách khắc phục:** Mã hóa Base64 nội dung file config từ máy Local và bắn trực tiếp qua kết nối SSH để ghi đè lên VPS, đảm bảo config được cập nhật mà không vi phạm nguyên tắc bảo mật của Git.
+
+### Khó khăn 5: Trình duyệt "mù" trên Linux (Thiếu Dependencies hệ thống)
+Ngay cả khi code đã chạy trên VPS, Playwright liên tục báo lỗi `Could not discover feed API`.
+- 👉 **Nguyên nhân:** Khác với Windows, môi trường Ubuntu Server (headless) thiếu hụt nghiêm trọng các thư viện đồ họa cốt lõi (như `libgbm`, `libxkbcommon`) để Chromium có thể khởi tạo.
+- 👉 **Cách khắc phục:** Buộc phải thiết lập chạy lệnh `playwright install-deps` bằng quyền root trên VPS để cài đặt hàng tá gói thư viện phụ trợ. Ngoài ra, phải cấu hình User-Agent mô phỏng Chrome trên Windows để không bị Binance gắn cờ (flagged) là bot ngay từ giây đầu tiên.
+
+### Khó khăn 6: "Kẻ ngáng đường" Popup Cookie Consent
+Khi trình duyệt đã chạy được, nó vẫn không bắt được gói tin.
+- 👉 **Cách debug sáng tạo:** Tôi đã viết một script nhỏ chạy độc lập trên VPS, ra lệnh cho trình duyệt tải trang Binance, chờ 15s và **chụp ảnh màn hình (screenshot)**, sau đó chuyển ảnh đó về máy Local để tận mắt xem xét.
+- 👉 **Nguyên nhân:** Bức ảnh chỉ ra một cái Popup khổng lồ "Chấp nhận mọi cookie" đang che khuất màn hình. Cái popup này chặn luồng tải dữ liệu (lazy-load) của Binance, khiến gói tin API không bao giờ được kích hoạt.
+- 👉 **Cách khắc phục:** Bổ sung logic tương tác UI: Yêu cầu Playwright rà quét DOM, nếu thấy nút có chữ "Chấp nhận mọi cookie", lập tức click vào nó trước khi cuộn trang.
+
+### Khó khăn 7: Đọc nội dung gói tin (Body parsing) bị nghẽn
+Dù đã vượt qua Popup, hàm bắt gói tin vẫn thỉnh thoảng thất bại vì lệnh `await response.body()` bị nghẽn hoặc văng lỗi (Exception) trên môi trường VPS có băng thông giới hạn.
+- 👉 **Cách khắc phục:** Tối ưu hóa cực đoan. Nhận thấy `targetSquareUid` thực chất đã nằm tò tò trên chuỗi URL của gói tin API (`?targetSquareUid=sHENlM...`). Tôi lập tức đập bỏ đoạn code ép đọc nội dung Body, thay vào đó chỉ bóc tách tham số trực tiếp từ URL. Tốc độ Discovery tăng vọt và độ ổn định đạt 100%.
+
+### Khó khăn 8: Nút thắt cổ chai từ phía AI (Lỗi 503 Service Unavailable)
+Quá trình bắt bài viết thành công rực rỡ, hàng loạt ảnh được tải về. Nhưng kỳ lạ là chỉ có đúng 1 bức ảnh được trích xuất thành file JSON.
+- 👉 **Nguyên nhân:** Sau khi đào sâu vào file `gemini-extractor.log` trên VPS, tôi phát hiện ra Google Gemini trả về lỗi HTTP 503. Lý do: model `gemini-3.1-flash-lite-preview` là bản dùng thử nên liên tục bị quá tải (High Demand) khi đẩy liên tiếp các request.
+- 👉 **Cách khắc phục:** Khuyến nghị người dùng chuyển đổi sang các model ổn định hơn (như `gemini-1.5-flash` hoặc `gemini-2.0-flash`). Đồng thời bảo lưu tuyệt đối cơ chế `_GEMINI_INTER_IMAGE_DELAY_SECONDS = 120` (nghỉ 2 phút giữa các lần gọi) để bảo vệ tài khoản API không bị khóa.
+
 ---
 
-## 4. Bài Học Tổng Kết
+## 4. Bài Học Tổng Kết Cuối Cùng
 
-Qua tác vụ này, tôi nhận thấy:
+Qua toàn bộ chiến dịch tích hợp này, hệ thống không chỉ mạnh hơn mà triết lý kỹ thuật cũng được đúc kết rõ nét:
 1. **Kiên nhẫn dò đường (Probing):** Không bao giờ giả định về API của các sàn lớn. Hãy luôn viết script thăm dò từng lớp bảo vệ (Requests -> CFFI -> Playwright) trước khi code hệ thống chính.
-2. **Kiến trúc quyết định khả năng mở rộng:** Việc bỏ ra chút thời gian refactor `MonitorBase` ở Phase 1 là cực kỳ xứng đáng. Nó giúp việc thêm Binance sau này không đụng chạm rủi ro tới code đang chạy live.
-3. **Xử lý Thread/Async trong Python:** Rất dễ dính Deadlock khi kết hợp thư viện đồng bộ (như APScheduler/Requests) với bất đồng bộ (Playwright). Phải tách bạch thật rõ ranh giới giữa 2 luồng này.
+2. **"See what the bot sees" (Thấy những gì bot thấy):** Chụp màn hình trên môi trường production headless là công cụ debug quyền lực nhất khi crawler bị kẹt mà không rõ nguyên do.
+3. **Kiến trúc quyết định khả năng mở rộng:** Việc bỏ ra chút thời gian refactor `MonitorBase` ở Phase 1 là cực kỳ xứng đáng. Nó giúp việc thêm Binance sau này không đụng chạm rủi ro tới code đang chạy live.
+4. **Xử lý Thread/Async trong Python:** Rất dễ dính Deadlock khi kết hợp thư viện đồng bộ (như APScheduler/Requests) với bất đồng bộ (Playwright). Phải tách bạch thật rõ ranh giới giữa 2 luồng này.
+5. **Dữ liệu mỏng luôn tốt hơn dữ liệu dày:** Trong quá trình Intercept API, nếu lấy được ID/Token từ URL hoặc Header, hãy ưu tiên nó thay vì cố gắng parse toàn bộ cục Body JSON nặng nề.
