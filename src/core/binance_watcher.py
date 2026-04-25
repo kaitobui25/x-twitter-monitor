@@ -74,7 +74,11 @@ async def _launch_browser():
             "--js-flags='--max-old-space-size=256'"
         ],
     )
-    logger.info("Browser launched.")
+    # Using a realistic User Agent to avoid being flagged as a bot immediately
+    _browser_context = await _browser.new_context(
+        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    )
+    logger.info("Browser launched with custom User Agent.")
 
 
 async def _get_browser():
