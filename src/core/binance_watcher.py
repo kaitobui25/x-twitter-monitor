@@ -184,6 +184,18 @@ async def _discover_api(handle: str) -> Tuple[Optional[str], Optional[str], Dict
     logger.info("Loading profile page: %s", url)
     try:
         await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+        
+        # Handle Cookie Consent Popup if it appears
+        try:
+            # Look for "Chấp nhận mọi cookie" or "Accept All Cookies"
+            cookie_button = page.get_by_role("button", name="Chấp nhận mọi cookie")
+            if await cookie_button.is_visible(timeout=5000):
+                await cookie_button.click()
+                logger.info("Cookie consent accepted.")
+                await asyncio.sleep(2)
+        except Exception:
+            pass # Popup might not be there, that's fine
+            
     except Exception as e:
         logger.warning("Page load warning (may be ok): %s", e)
 
@@ -191,8 +203,8 @@ async def _discover_api(handle: str) -> Tuple[Optional[str], Optional[str], Dict
     await asyncio.sleep(10)
     
     # Scroll to trigger lazy-loaded posts
-    await page.evaluate("window.scrollBy(0, 600)")
-    await asyncio.sleep(3)
+    await page.evaluate("window.scrollBy(0, 800)")
+    await asyncio.sleep(5)
 
     await context.close()
     return found_endpoint, found_uid, found_headers, found_posts
