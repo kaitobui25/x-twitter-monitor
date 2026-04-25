@@ -65,7 +65,14 @@ async def _launch_browser():
     _playwright_obj = await async_playwright().start()
     _browser = await _playwright_obj.chromium.launch(
         headless=True,
-        args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+        args=[
+            "--no-sandbox", 
+            "--disable-setuid-sandbox", 
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--disable-software-rasterizer",
+            "--js-flags='--max-old-space-size=256'"
+        ],
     )
     logger.info("Browser launched.")
 
@@ -172,12 +179,12 @@ async def _discover_api(handle: str) -> Tuple[Optional[str], Optional[str], Dict
     url = PROFILE_BASE_URL.format(handle=handle)
     logger.info("Loading profile page: %s", url)
     try:
-        await page.goto(url, wait_until="domcontentloaded", timeout=40000)
+        await page.goto(url, wait_until="domcontentloaded", timeout=60000)
     except Exception as e:
         logger.warning("Page load warning (may be ok): %s", e)
 
     # Allow network to settle so API calls are captured
-    await asyncio.sleep(5)
+    await asyncio.sleep(10)
     
     # Scroll to trigger lazy-loaded posts
     await page.evaluate("window.scrollBy(0, 600)")
