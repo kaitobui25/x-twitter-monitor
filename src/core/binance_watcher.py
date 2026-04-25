@@ -129,29 +129,14 @@ async def _discover_api(handle: str) -> Tuple[Optional[str], Optional[str], Dict
     found_headers:  Dict[str, str] = {}
 
     async def on_response(response):
-        nonlocal found_endpoint, found_uid, found_posts, found_headers
+        nonlocal found_endpoint, found_uid, found_headers, found_posts
         url = response.url
         if _TARGET_API not in url:
             return
         if response.status != 200:
             return
         
-        try:
-            body_bytes = await response.body()
-            body_text = body_bytes.decode("utf-8", errors="replace")
-            data = json.loads(body_text)
-        except Exception:
-            return
-
-        if data.get("code") != "000000":
-            return
-
-        posts = _extract_posts_from_response(data)
-        if posts is None:
-            return
-
         # Parse url to extract targetSquareUid and the base URL
-        # url: https://.../queryUserProfilePageContentsWithFilter?targetSquareUid=123&...
         from urllib.parse import urlparse, parse_qs
         parsed = urlparse(url)
         qs = parse_qs(parsed.query)
@@ -162,8 +147,8 @@ async def _discover_api(handle: str) -> Tuple[Optional[str], Optional[str], Dict
 
         found_endpoint = url.split("?")[0]
         found_uid      = uid
-        found_posts    = posts
         
+        # Try to capture headers
         req_headers = dict(response.request.headers)
         found_headers = {
             k: v for k, v in req_headers.items()
@@ -174,8 +159,19 @@ async def _discover_api(handle: str) -> Tuple[Optional[str], Optional[str], Dict
                 "csrftoken"
             )
         }
+        
+        # Try to get initial posts (optional during discovery)
+        try:
+            body_bytes = await response.body()
+            data = json.loads(body_bytes.decode("utf-8", errors="replace"))
+            posts = _extract_posts_from_response(data)
+            if posts:
+                found_posts = posts
+        except Exception:
+            pass # Not critical if body parsing fails here
+
         logger.info(
-            "Discovered GET feed API: %s (UID: %s, posts: %d)", found_endpoint, found_uid, len(posts)
+            "Discovered feed API via URL: %s (UID: %s)", found_endpoint, found_uid
         )
 
     page.on("response", on_response)
