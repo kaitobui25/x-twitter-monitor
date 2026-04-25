@@ -1,6 +1,13 @@
 """
-MonitorBase — abstract base for all monitors.
-MonitorManager — registry that holds active monitor instances.
+MonitorBase   — platform-agnostic base for ALL monitors.
+               Handles: logging, notification dispatch, status tracking.
+               Does NOT know anything about Twitter, Binance, or any platform.
+
+TwitterMonitorBase — extends MonitorBase with Twitter-specific watcher setup.
+               All existing Twitter monitors (Tweet, Profile, Like, Following)
+               inherit from this class instead of MonitorBase.
+
+MonitorManager — registry that holds active monitor instances (unchanged).
 """
 import logging
 from abc import ABC, abstractmethod
@@ -9,32 +16,38 @@ from typing import List, Union
 from src.notifiers.cqhttp    import CqhttpMessage, CqhttpNotifier
 from src.notifiers.discord   import DiscordMessage, DiscordNotifier
 from src.notifiers.telegram  import TelegramMessage, TelegramNotifier
-from src.core.watcher        import TwitterWatcher
 from src.utils.tracker       import StatusTracker
 
 
 class MonitorBase(ABC):
+    """
+    Platform-agnostic abstract base.
+    Subclasses are responsible for acquiring their own data source (watcher).
+    """
 
-    def __init__(self, monitor_type: str, username: str, title: str,
-                 token_config: dict, user_config: dict, cookies_dir: str):
+    def __init__(self, monitor_type: str, identifier: str, title: str,
+                 token_config: dict, user_config: dict):
+        """
+        Parameters
+        ----------
+        monitor_type : str
+            Short string identifying the monitor kind (e.g. 'Tweet', 'BinanceSquare').
+        identifier : str
+            The target's unique handle on the platform (username, URL handle, etc.).
+        title : str
+            Human-readable label used in log/notification prefixes.
+        token_config : dict
+            Global secrets (API keys, bot tokens). Passed through to subclasses.
+        user_config : dict
+            Per-target notification config (telegram_chat_id_list, etc.).
+        """
         self.monitor_type = monitor_type
-        self.username     = username
+        self.identifier   = identifier
         self.title        = title
-        self.token_config = token_config  # store for subclass access (e.g. gemini_api_keys)
+        self.token_config = token_config  # available to subclasses (e.g. gemini_api_keys)
 
-        logger_name  = '{}-{}'.format(title, monitor_type)
-        self.logger  = logging.getLogger(logger_name)
-
-        # Build watcher with sign-out callback
-        self.twitter_watcher = TwitterWatcher(
-            auth_username_list=token_config.get('twitter_auth_username_list', []),
-            cookies_dir=cookies_dir,
-            on_signout=self._on_signout,
-        )
-
-        self.user_id = self.twitter_watcher.get_id_by_username(username)
-        if not self.user_id:
-            raise RuntimeError('Cannot find X.com user: @{}'.format(username))
+        logger_name = '{}-{}'.format(title, monitor_type)
+        self.logger = logging.getLogger(logger_name)
 
         self.telegram_chat_id_list    = user_config.get('telegram_chat_id_list', [])
         self.cqhttp_url_list          = user_config.get('cqhttp_url_list', [])
@@ -43,27 +56,14 @@ class MonitorBase(ABC):
         self.update_last_watch_time()
 
     # ------------------------------------------------------------------
-    # Sign-out alert
-    # ------------------------------------------------------------------
-
-    def _on_signout(self, account_username: str) -> None:
-        self.logger.error('Auth account @{} has been signed out!'.format(account_username))
-        msg = (
-            '[ALERT] X.com auth account @{} has been SIGNED OUT!\n'
-            'Please run: python main.py login --username {} --password <password>\n'
-            'Then restart the monitor.'
-        ).format(account_username, account_username)
-        self.send_message(msg)
-
-    # ------------------------------------------------------------------
     # Status tracking
     # ------------------------------------------------------------------
 
     def update_last_watch_time(self):
-        StatusTracker.update_monitor_status(self.monitor_type, self.username)
+        StatusTracker.update_monitor_status(self.monitor_type, self.identifier)
 
     def get_last_watch_time(self):
-        return StatusTracker.get_monitor_status(self.monitor_type, self.username)
+        return StatusTracker.get_monitor_status(self.monitor_type, self.identifier)
 
     # ------------------------------------------------------------------
     # Notification dispatch
@@ -100,6 +100,55 @@ class MonitorBase(ABC):
     @abstractmethod
     def status(self) -> str:
         """Return a short human-readable status string."""
+
+
+# ---------------------------------------------------------------------------
+
+class TwitterMonitorBase(MonitorBase):
+    """
+    MonitorBase specialised for Twitter/X.com monitors.
+    Adds: TwitterWatcher initialisation, user_id lookup, sign-out detection.
+
+    All existing Twitter monitors (TweetMonitor, ProfileMonitor, LikeMonitor,
+    FollowingMonitor) inherit from this class — zero behaviour change.
+    """
+
+    def __init__(self, monitor_type: str, username: str, title: str,
+                 token_config: dict, user_config: dict, cookies_dir: str):
+        # MonitorBase uses `identifier`; Twitter uses `username` as the identifier.
+        super().__init__(monitor_type, username, title, token_config, user_config)
+
+        # Keep `username` as a convenience alias for Twitter-specific code.
+        self.username = username
+
+        # Import here to avoid loading Twitter-specific deps for non-Twitter monitors.
+        from src.core.watcher import TwitterWatcher
+
+        self.twitter_watcher = TwitterWatcher(
+            auth_username_list=token_config.get('twitter_auth_username_list', []),
+            cookies_dir=cookies_dir,
+            on_signout=self._on_signout,
+        )
+
+        self.user_id = self.twitter_watcher.get_id_by_username(username)
+        if not self.user_id:
+            raise RuntimeError('Cannot find X.com user: @{}'.format(username))
+
+        self.logger.info('TwitterMonitorBase ready for @{} (user_id={})'.format(
+            username, self.user_id))
+
+    # ------------------------------------------------------------------
+    # Sign-out alert (Twitter-specific)
+    # ------------------------------------------------------------------
+
+    def _on_signout(self, account_username: str) -> None:
+        self.logger.error('Auth account @{} has been signed out!'.format(account_username))
+        msg = (
+            '[ALERT] X.com auth account @{} has been SIGNED OUT!\n'
+            'Please run: python main.py login --username {} --password <password>\n'
+            'Then restart the monitor.'
+        ).format(account_username, account_username)
+        self.send_message(msg)
 
 
 # ---------------------------------------------------------------------------

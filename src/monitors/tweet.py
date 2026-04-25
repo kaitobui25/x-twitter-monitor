@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import requests as http_requests
 
-from src.monitors.base  import MonitorBase
+from src.monitors.base  import TwitterMonitorBase
 from src.utils.parser   import (parse_media_from_tweet, parse_text_from_tweet,
                                 parse_create_time_from_tweet, find_all, find_one,
                                 get_content, convert_html_to_text)
@@ -52,7 +52,7 @@ def _next_sequence_number(directory: str, date_str: str, ext: str) -> int:
     return n
 
 
-class TweetMonitor(MonitorBase):
+class TweetMonitor(TwitterMonitorBase):
     monitor_type = 'Tweet'
 
     def __init__(self, username, title, token_config, user_config, cookies_dir):

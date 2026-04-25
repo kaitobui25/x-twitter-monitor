@@ -6,7 +6,7 @@ import time
 from functools import cached_property
 from typing import Union
 
-from src.monitors.base      import MonitorBase, MonitorManager
+from src.monitors.base      import TwitterMonitorBase, MonitorManager
 from src.monitors.following  import FollowingMonitor
 from src.monitors.like       import LikeMonitor
 from src.monitors.tweet      import TweetMonitor
@@ -87,7 +87,7 @@ class _ElementBuffer:
         return None
 
 
-class ProfileMonitor(MonitorBase):
+class ProfileMonitor(TwitterMonitorBase):
     monitor_type = 'Profile'
 
     def __init__(self, username, title, token_config, user_config, cookies_dir):

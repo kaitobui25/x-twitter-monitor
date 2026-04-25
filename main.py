@@ -24,11 +24,12 @@ from apscheduler.schedulers.background import BlockingScheduler
 from src.core.graphql      import GraphqlAPI
 from src.core.login        import login
 from src.core.watcher      import TwitterWatcher
-from src.monitors.base     import MonitorManager
-from src.monitors.following import FollowingMonitor
-from src.monitors.like      import LikeMonitor
-from src.monitors.profile   import ProfileMonitor
-from src.monitors.tweet     import TweetMonitor
+from src.monitors.base          import MonitorManager
+from src.monitors.following      import FollowingMonitor
+from src.monitors.like           import LikeMonitor
+from src.monitors.profile        import ProfileMonitor
+from src.monitors.tweet          import TweetMonitor
+from src.monitors.binance_square import BinanceSquareMonitor
 from src.notifiers.cqhttp   import CqhttpNotifier
 from src.notifiers.discord  import DiscordNotifier
 from src.notifiers.telegram import TelegramMessage, TelegramNotifier, send_alert
@@ -66,9 +67,14 @@ def _strip_comments(obj):
 def _load_config(path: str) -> dict:
     with open(path, 'r', encoding='utf-8') as f:
         cfg = _strip_comments(json.load(f))
-    assert cfg.get('twitter_accounts'), "config: 'twitter_accounts' is required."
+    # twitter_accounts is optional when only Binance monitors are used
+    has_twitter = bool(cfg.get('twitter_accounts'))
+    has_targets = bool(cfg.get('targets'))
+    has_binance = bool(cfg.get('binance_targets'))
     assert cfg.get('telegram', {}).get('bot_token'), "config: 'telegram.bot_token' is required."
-    assert cfg.get('targets'), "config: 'targets' list is required."
+    assert has_targets or has_binance, "config: at least one of 'targets' or 'binance_targets' is required."
+    if has_targets and not has_twitter:
+        raise AssertionError("config: 'twitter_accounts' is required when 'targets' is set.")
     return cfg
 
 
@@ -197,10 +203,14 @@ def run(config, cookies, logdir, once):
     main_logger.info(startup_text)
 
     # ----- Build monitors -----
+    binance_targets = cfg.get('binance_targets', [])
+    total_targets   = len(targets) + len(binance_targets)
     monitors  = {cls.monitor_type: {} for cls in CONFIG_FIELD_TO_MONITOR.values()}
-    executors = {'default': ThreadPoolExecutor(max(len(targets), 1))}
+    monitors[BinanceSquareMonitor.monitor_type] = {}
+    executors = {'default': ThreadPoolExecutor(max(total_targets, 1))}
     scheduler = BlockingScheduler(executors=executors)
 
+    # ----- Twitter monitors -----
     for target in targets:
         username = target['username']
         title    = target.get('title', username)
@@ -238,6 +248,38 @@ def run(config, cookies, logdir, once):
                 id='{}-{}'.format(mtype, title),
                 max_instances=1,
             )
+
+    # ----- Binance Square monitors -----
+    for bt in binance_targets:
+        handle  = bt['handle']
+        title   = bt.get('title', handle)
+        user_cfg = {
+            'telegram_chat_id_list':    bt.get('notify_telegram_chat_ids', []),
+            'discord_webhook_url_list': bt.get('notify_discord_webhooks', []),
+            'cqhttp_url_list':          bt.get('notify_cqhttp_urls', []),
+        }
+
+        mtype       = BinanceSquareMonitor.monitor_type
+        logger_name = '{}-{}'.format(title, mtype)
+        get_logger(logger_name, os.path.join(log_dir, 'monitors'))
+
+        try:
+            monitors[mtype][title] = BinanceSquareMonitor(
+                handle, title, token_config, user_cfg)
+        except Exception as e:
+            main_logger.error('Failed to init BinanceSquare for %s: %s', handle, e)
+            if maintainer_id:
+                send_alert(telegram_token, maintainer_id,
+                           '[ERROR] Failed to init BinanceSquare monitor for {}: {}'.format(
+                               handle, e))
+            continue
+
+        scheduler.add_job(
+            monitors[mtype][title].watch,
+            trigger='interval', seconds=scan_interval,
+            id='{}-{}'.format(mtype, title),
+            max_instances=1,
+        )
 
     MonitorManager.init(monitors=monitors)
 
@@ -284,9 +326,9 @@ def run(config, cookies, logdir, once):
 
     if once:
         print('[OK] Running ONE scan (--once).')
-        # Chạy tất cả monitor theo thứ tự ưu tiên:
-        # Tweet trước (chứa AI extraction), rồi Like, Following, cuối cùng Profile.
+        # Run order: Binance first (slower, browser-based), then Twitter monitors.
         run_order = [
+            BinanceSquareMonitor.monitor_type,
             TweetMonitor.monitor_type,
             LikeMonitor.monitor_type,
             FollowingMonitor.monitor_type,
@@ -296,7 +338,7 @@ def run(config, cookies, logdir, once):
             for title, monitor in monitors.get(mtype, {}).items():
                 monitor.watch()
 
-        # Wait a bit for async notifier queues to drain
+        # Wait for async notifier queues to drain
         time.sleep(10)
         print('[OK] Scan complete. Exiting.')
         return

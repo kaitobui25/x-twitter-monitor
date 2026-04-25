@@ -2,7 +2,7 @@
 import time
 from typing import List, Set, Union
 
-from src.monitors.base import MonitorBase
+from src.monitors.base import TwitterMonitorBase
 from src.utils.parser  import parse_media_from_tweet, parse_text_from_tweet, find_all, find_one
 from src.utils.state   import StateManager
 
@@ -32,7 +32,7 @@ def _filter_ads(likes: list) -> list:
     return clean
 
 
-class LikeMonitor(MonitorBase):
+class LikeMonitor(TwitterMonitorBase):
     monitor_type         = 'Like'
     _ID_SET_MAX_SIZE     = 1000
 

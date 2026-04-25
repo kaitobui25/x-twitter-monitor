@@ -2,12 +2,12 @@
 import time
 from typing import Dict, Tuple, Union
 
-from src.monitors.base import MonitorBase
+from src.monitors.base import TwitterMonitorBase
 from src.utils.parser  import find_all, find_one, get_cursor, get_content
 from src.utils.state   import StateManager
 
 
-class FollowingMonitor(MonitorBase):
+class FollowingMonitor(TwitterMonitorBase):
     monitor_type = 'Following'
 
     def __init__(self, username, title, token_config, user_config, cookies_dir):
