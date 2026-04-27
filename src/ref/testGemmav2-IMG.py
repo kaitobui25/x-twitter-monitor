@@ -3,7 +3,7 @@ from PIL import Image
 import io
 
 # Khởi tạo client
-client = genai.Client(api_key="AIzaSyA-4f92eyt0C7xRQv9fp1sjR-VG9GqTHU4")
+client = genai.Client(api_key="xxxxxxxxxxxxxxxxxx")
 
 # Load ảnh từ ổ C
 image = Image.open(r"D:\Phong\03_Finance\X\twitter-monitor\follower\BangXBT\2026-04-23-004.JFIF").convert("RGB")
