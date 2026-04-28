@@ -29,9 +29,6 @@ logger = logging.getLogger("binance-watcher")
 # Module-level singleton state
 # ---------------------------------------------------------------------------
 
-_browser_lock: Optional[asyncio.Lock] = None
-_browser         = None   # playwright Browser
-_playwright_obj  = None   # playwright instance
 _event_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
@@ -56,43 +53,6 @@ def _run_async(coro):
     return future.result(timeout=120)
 
 
-async def _launch_browser():
-    """Launch a headless Chromium browser. Called once per process."""
-    global _browser, _playwright_obj
-    from playwright.async_api import async_playwright
-
-    logger.info("Launching Playwright/Chromium browser...")
-    _playwright_obj = await async_playwright().start()
-    _browser = await _playwright_obj.chromium.launch(
-        headless=True,
-        args=[
-            "--no-sandbox", 
-            "--disable-setuid-sandbox", 
-            "--disable-dev-shm-usage",
-            "--disable-gpu",
-            "--disable-software-rasterizer",
-            "--js-flags='--max-old-space-size=256'"
-        ],
-    )
-    # Using a realistic User Agent to avoid being flagged as a bot immediately
-    _browser_context = await _browser.new_context(
-        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    )
-    logger.info("Browser launched with custom User Agent.")
-
-
-async def _get_browser():
-    """Return the shared browser, launching it if necessary."""
-    global _browser, _browser_lock
-    if _browser_lock is None:
-        _browser_lock = asyncio.Lock()
-        
-    async with _browser_lock:
-        if _browser is None:
-            await _launch_browser()
-    return _browser
-
-
 # ---------------------------------------------------------------------------
 # API discovery via full page load
 # ---------------------------------------------------------------------------
@@ -105,105 +65,117 @@ _TARGET_API = "queryUserProfilePageContentsWithFilter"
 
 async def _discover_api(handle: str) -> Tuple[Optional[str], Optional[str], Dict, List[Dict]]:
     """
-    Open the profile page in a new browser context, intercept network calls,
-    identify the BAPI post-list endpoint + targetUid, and return:
-        (endpoint_base, targetUid, common_headers, first_page_posts)
-
-    Returns (None, None, {}, []) on failure.
+    Launch a temporary browser, open the profile page, intercept network calls,
+    identify the BAPI post-list endpoint + targetUid, and return gathered data.
+    The browser is closed immediately after.
     """
-    browser = await _get_browser()
-    context = await browser.new_context(
-        user_agent=(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0.0.0 Safari/537.36"
-        ),
-        locale="vi-VN",
-        viewport={"width": 1280, "height": 900},
-    )
-    page = await context.new_page()
+    from playwright.async_api import async_playwright
 
-    found_endpoint: Optional[str]  = None
-    found_uid:      Optional[str]  = None
-    found_posts:    List[Dict]     = []
-    found_headers:  Dict[str, str] = {}
-
-    async def on_response(response):
-        nonlocal found_endpoint, found_uid, found_headers, found_posts
-        url = response.url
-        if _TARGET_API not in url:
-            return
-        if response.status != 200:
-            return
-        
-        # Parse url to extract targetSquareUid and the base URL
-        from urllib.parse import urlparse, parse_qs
-        parsed = urlparse(url)
-        qs = parse_qs(parsed.query)
-        
-        uid = qs.get("targetSquareUid", [None])[0]
-        if not uid:
-            return
-
-        found_endpoint = url.split("?")[0]
-        found_uid      = uid
-        
-        # Try to capture headers
-        req_headers = dict(response.request.headers)
-        found_headers = {
-            k: v for k, v in req_headers.items()
-            if k.lower() in (
-                "clienttype", "lang", "user-agent", "cookie",
-                "content-type", "bnc-uuid", "device-info",
-                "x-trace-id", "fvideo-id", "bdt-client-id",
-                "csrftoken"
-            )
-        }
-        
-        # Try to get initial posts (optional during discovery)
-        try:
-            body_bytes = await response.body()
-            data = json.loads(body_bytes.decode("utf-8", errors="replace"))
-            posts = _extract_posts_from_response(data)
-            if posts:
-                found_posts = posts
-        except Exception:
-            pass # Not critical if body parsing fails here
-
-        logger.info(
-            "Discovered feed API via URL: %s (UID: %s)", found_endpoint, found_uid
+    async with async_playwright() as p:
+        logger.info("Launching temporary Playwright/Chromium for discovery...")
+        browser = await p.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-software-rasterizer",
+                "--js-flags='--max-old-space-size=256'"
+            ],
         )
+        context = await browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            locale="vi-VN",
+            viewport={"width": 1280, "height": 900},
+        )
+        page = await context.new_page()
 
-    page.on("response", on_response)
+        found_endpoint: Optional[str]  = None
+        found_uid:      Optional[str]  = None
+        found_posts:    List[Dict]     = []
+        found_headers:  Dict[str, str] = {}
 
-    url = PROFILE_BASE_URL.format(handle=handle)
-    logger.info("Loading profile page: %s", url)
-    try:
-        await page.goto(url, wait_until="domcontentloaded", timeout=60000)
-        
-        # Handle Cookie Consent Popup if it appears
-        try:
-            # Look for "Chấp nhận mọi cookie" or "Accept All Cookies"
-            cookie_button = page.get_by_role("button", name="Chấp nhận mọi cookie")
-            if await cookie_button.is_visible(timeout=5000):
-                await cookie_button.click()
-                logger.info("Cookie consent accepted.")
-                await asyncio.sleep(2)
-        except Exception:
-            pass # Popup might not be there, that's fine
+        async def on_response(response):
+            nonlocal found_endpoint, found_uid, found_headers, found_posts
+            url = response.url
+            if _TARGET_API not in url:
+                return
+            if response.status != 200:
+                return
             
-    except Exception as e:
-        logger.warning("Page load warning (may be ok): %s", e)
+            # Parse url to extract targetSquareUid and the base URL
+            from urllib.parse import urlparse, parse_qs
+            parsed = urlparse(url)
+            qs = parse_qs(parsed.query)
+            
+            uid = qs.get("targetSquareUid", [None])[0]
+            if not uid:
+                return
 
-    # Allow network to settle so API calls are captured
-    await asyncio.sleep(10)
-    
-    # Scroll to trigger lazy-loaded posts
-    await page.evaluate("window.scrollBy(0, 800)")
-    await asyncio.sleep(5)
+            found_endpoint = url.split("?")[0]
+            found_uid      = uid
+            
+            # Try to capture headers
+            req_headers = dict(response.request.headers)
+            found_headers = {
+                k: v for k, v in req_headers.items()
+                if k.lower() in (
+                    "clienttype", "lang", "user-agent", "cookie",
+                    "content-type", "bnc-uuid", "device-info",
+                    "x-trace-id", "fvideo-id", "bdt-client-id",
+                    "csrftoken"
+                )
+            }
+            
+            # Try to get initial posts (optional during discovery)
+            try:
+                body_bytes = await response.body()
+                data = json.loads(body_bytes.decode("utf-8", errors="replace"))
+                posts = _extract_posts_from_response(data)
+                if posts:
+                    found_posts = posts
+            except Exception:
+                pass # Not critical if body parsing fails here
 
-    await context.close()
-    return found_endpoint, found_uid, found_headers, found_posts
+            logger.info(
+                "Discovered feed API via URL: %s (UID: %s)", found_endpoint, found_uid
+            )
+
+        page.on("response", on_response)
+
+        url = PROFILE_BASE_URL.format(handle=handle)
+        logger.info("Loading profile page: %s", url)
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            
+            # Handle Cookie Consent Popup if it appears
+            try:
+                # Look for "Chấp nhận mọi cookie" or "Accept All Cookies"
+                cookie_button = page.get_by_role("button", name="Chấp nhận mọi cookie")
+                if await cookie_button.is_visible(timeout=5000):
+                    await cookie_button.click()
+                    logger.info("Cookie consent accepted.")
+                    await asyncio.sleep(2)
+            except Exception:
+                pass # Popup might not be there, that's fine
+                
+        except Exception as e:
+            logger.warning("Page load warning (may be ok): %s", e)
+
+        # Allow network to settle so API calls are captured
+        await asyncio.sleep(10)
+        
+        # Scroll to trigger lazy-loaded posts
+        await page.evaluate("window.scrollBy(0, 800)")
+        await asyncio.sleep(5)
+
+        await context.close()
+        return found_endpoint, found_uid, found_headers, found_posts
 
 
 def _extract_posts_from_response(data: dict) -> Optional[List[Dict]]:

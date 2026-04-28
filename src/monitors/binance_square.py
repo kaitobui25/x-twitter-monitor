@@ -288,7 +288,8 @@ class BinanceSquareMonitor(MonitorBase):
             StateManager.set(self.monitor_type, self.handle, "last_post_id", self.last_post_id)
             StateManager.save()
 
-        # Process in chronological order (oldest first)
+        # 1. Collect all new data and notify immediately
+        images_to_process = []
         for post in reversed(new_posts):
             post_id  = _parse_post_id(post)
             text     = _parse_post_text(post)
@@ -298,9 +299,13 @@ class BinanceSquareMonitor(MonitorBase):
             message = "{}\nLink: {}".format(text, post_url)
             self.send_message(message, photo_url_list=images or None)
             self.logger.info("New post notified: %s", post_id)
+            
+            if images:
+                images_to_process.append(images)
 
-            # Download images & run Gemini
-            self._process_images(images)
+        # 2. Process images for AI extraction (slow phase with sleeps)
+        for img_list in images_to_process:
+            self._process_images(img_list)
 
         self.update_last_watch_time()
         return True

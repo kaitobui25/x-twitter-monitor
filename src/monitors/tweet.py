@@ -192,6 +192,8 @@ class TweetMonitor(TwitterMonitorBase):
         StateManager.set(self.monitor_type, self.username, 'last_tweet_id', self.last_tweet_id)
         StateManager.save()
 
+        # 1. Collect all new data and notify immediately
+        images_to_process = []
         for tweet in reversed(new_tweets):
             tweet_id = find_one(tweet, 'rest_id')
             detail   = self._get_tweet_detail(tweet_id)
@@ -216,8 +218,12 @@ class TweetMonitor(TwitterMonitorBase):
             self.send_message(text, photos, videos)
             self.logger.info('New tweet notified: {}'.format(tweet_id))
 
-            # Download images & run Gemini extraction
-            self._process_images(photos)
+            if photos:
+                images_to_process.append(photos)
+
+        # 2. Process images for AI extraction (slow phase with sleeps)
+        for photo_list in images_to_process:
+            self._process_images(photo_list)
 
         self.update_last_watch_time()
         return True
