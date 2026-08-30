@@ -6,6 +6,7 @@ Usage:
   python main.py run --config path/to/config.json
   python main.py check-tokens
   python main.py login --username X --password Y
+  python main.py export-tweets --username X --start YYYY-MM-DD --end YYYY-MM-DD
 """
 import sys
 
@@ -14,7 +15,7 @@ import logging
 import os
 import platform
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import click
 from apscheduler.executors.pool import ThreadPoolExecutor
@@ -24,6 +25,7 @@ from apscheduler.schedulers.background import BlockingScheduler
 from src.core.graphql      import GraphqlAPI
 from src.core.login        import login
 from src.core.watcher      import TwitterWatcher
+from src.exporters.tweet_history import ExportError, TweetHistoryExporter
 from src.monitors.base          import MonitorManager
 from src.monitors.following      import FollowingMonitor
 from src.monitors.like           import LikeMonitor
@@ -375,6 +377,104 @@ def check_tokens(config, cookies, test_username, output_response, telegram_chat_
         TelegramNotifier.init(token_cfg['telegram_bot_token'], 'telegram')
         TelegramNotifier.send_message(
             TelegramMessage([int(telegram_chat_id)], json.dumps(result, indent=4)))
+
+
+@cli.command('export-tweets', context_settings={'show_default': True})
+@click.option('--username', required=True, help='Target X.com username (with or without @)')
+@click.option('--start', 'start_date', required=True, help='Start date, YYYY-MM-DD')
+@click.option('--end', 'end_date', required=True, help='End date, YYYY-MM-DD (inclusive)')
+@click.option('--output', default=None, help='Output CSV path')
+@click.option('--config', default=DEFAULT_CONFIG, help='Path to config.json')
+@click.option('--cookies', default=DEFAULT_COOKIES, help='Cookie files directory')
+def export_tweets(username, start_date, end_date, output, config, cookies):
+    """Export historical X posts from SearchTimeline to CSV."""
+    username = username.strip().lstrip('@')
+    if not username:
+        raise click.ClickException('username cannot be empty')
+
+    try:
+        start_dt = datetime.strptime(start_date, '%Y-%m-%d').replace(tzinfo=timezone.utc)
+        end_dt = datetime.strptime(end_date, '%Y-%m-%d').replace(tzinfo=timezone.utc)
+    except ValueError:
+        raise click.ClickException('start/end must use YYYY-MM-DD')
+
+    if start_dt > end_dt:
+        raise click.ClickException('start must be <= end')
+
+    end_exclusive = end_dt + timedelta(days=1)
+
+    config_path = config if os.path.isabs(config) else os.path.join(_ROOT, config)
+    cookies_dir = _resolve_path(None, cookies)
+    auth_usernames = []
+
+    if os.path.isfile(config_path):
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                cfg = _strip_comments(json.load(f))
+            adv = cfg.get('advanced', {})
+            cookies_dir = _resolve_path(adv.get('cookies_dir'), cookies)
+            auth_usernames = [
+                a.get('username')
+                for a in cfg.get('twitter_accounts', [])
+                if a.get('username')
+            ]
+        except (OSError, json.JSONDecodeError) as e:
+            raise click.ClickException('Cannot read config: {}'.format(e))
+
+    if not auth_usernames:
+        if not os.path.isdir(cookies_dir):
+            raise click.ClickException('Cookie directory not found: {}'.format(cookies_dir))
+        auth_usernames = sorted(
+            os.path.splitext(name)[0]
+            for name in os.listdir(cookies_dir)
+            if name.lower().endswith('.json')
+        )
+
+    if not auth_usernames:
+        raise click.ClickException('No X auth cookie JSON files found.')
+
+    if output:
+        output_path = os.path.abspath(output)
+    else:
+        output_path = os.path.join(
+            _ROOT,
+            'exports',
+            username,
+            '{}_{}_{}.csv'.format(username, start_date, end_date),
+        )
+
+    def progress(info):
+        newest = info['newest'].date().isoformat() if info['newest'] else 'NONE'
+        oldest = info['oldest'].date().isoformat() if info['oldest'] else 'NONE'
+        click.echo(
+            'PAGE {page}: added={added} total={total} newest={newest} oldest={oldest}'.format(
+                page=info['page'],
+                added=info['added'],
+                total=info['total'],
+                newest=newest,
+                oldest=oldest,
+            )
+        )
+
+    watcher = TwitterWatcher(auth_usernames, cookies_dir)
+    exporter = TweetHistoryExporter(watcher, progress_callback=progress)
+
+    try:
+        result = exporter.export(
+            username=username,
+            start_dt=start_dt,
+            end_exclusive=end_exclusive,
+            output_path=output_path,
+        )
+    except ExportError as e:
+        raise click.ClickException(str(e))
+
+    click.echo('')
+    click.echo('[OK] Export complete')
+    click.echo('ROWS: {}'.format(result.rows_written))
+    click.echo('PAGES: {}'.format(result.pages_fetched))
+    click.echo('STOP: {}'.format(result.stop_reason))
+    click.echo('CSV: {}'.format(result.output_path))
 
 
 @cli.command('login', context_settings={'show_default': True})
