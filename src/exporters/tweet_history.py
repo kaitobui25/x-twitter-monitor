@@ -118,13 +118,47 @@ def _tweet_text(tweet: dict) -> str:
     return unescape(tweet.get('legacy', {}).get('full_text', ''))
 
 
+def _reply_status_id(tweet: dict) -> str:
+    legacy = tweet.get('legacy', {})
+    value = (
+        legacy.get('in_reply_to_status_id_str')
+        or tweet.get('in_reply_to_status_id_str')
+        or tweet.get('in_reply_to_status_id')
+    )
+    return str(value) if value else ''
+
+
+def _reply_user_id(tweet: dict) -> str:
+    legacy = tweet.get('legacy', {})
+    value = (
+        legacy.get('in_reply_to_user_id_str')
+        or tweet.get('in_reply_to_user_id_str')
+        or tweet.get('in_reply_to_user_id')
+    )
+    return str(value) if value else ''
+
+
+def _is_reply(tweet: dict) -> bool:
+    if _reply_status_id(tweet) or _reply_user_id(tweet):
+        return True
+
+    legacy = tweet.get('legacy', {})
+    tweet_id = str(tweet.get('rest_id') or legacy.get('id_str') or '')
+    conversation_id = str(legacy.get('conversation_id_str') or '')
+
+    # Some SearchTimeline responses omit in_reply_to_* fields. A reply still
+    # belongs to the root conversation, so its conversation ID differs from
+    # its own tweet ID. This is more reliable than checking for a leading @.
+    return bool(tweet_id and conversation_id and conversation_id != tweet_id)
+
+
 def _tweet_type(tweet: dict) -> str:
     legacy = tweet.get('legacy', {})
     if legacy.get('retweeted_status_result') or tweet.get('retweeted_status_result'):
         return 'retweet'
     if legacy.get('quoted_status_id_str') or tweet.get('quoted_status_result'):
         return 'quote'
-    if legacy.get('in_reply_to_status_id_str'):
+    if _is_reply(tweet):
         return 'reply'
     return 'tweet'
 
@@ -154,8 +188,8 @@ def _record_from_tweet(tweet: dict, username: str, created_at: datetime) -> dict
         'url': f'https://x.com/{username}/status/{tweet_id}',
         'post_type': _tweet_type(tweet),
         'conversation_id': legacy.get('conversation_id_str', ''),
-        'in_reply_to_status_id': legacy.get('in_reply_to_status_id_str', ''),
-        'in_reply_to_user_id': legacy.get('in_reply_to_user_id_str', ''),
+        'in_reply_to_status_id': _reply_status_id(tweet),
+        'in_reply_to_user_id': _reply_user_id(tweet),
         'quoted_tweet_id': legacy.get('quoted_status_id_str', ''),
         'retweeted_tweet_id': retweeted_tweet_id,
     }
