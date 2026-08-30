@@ -201,10 +201,12 @@ class TweetHistoryExporter:
         watcher: TwitterWatcher,
         page_size: int = 20,
         progress_callback: Callable[[dict], None] | None = None,
+        record_callback: Callable[[dict], None] | None = None,
     ):
         self.watcher = watcher
         self.page_size = page_size
         self.progress_callback = progress_callback
+        self.record_callback = record_callback
 
     def _resolve_user_id(self, username: str) -> str:
         data = self.watcher.get_user_by_username(username)
@@ -294,7 +296,10 @@ class TweetHistoryExporter:
                         continue
 
                     seen_tweet_ids.add(tweet_id)
-                    writer.write_row(_record_from_tweet(tweet, username, created_at))
+                    record = _record_from_tweet(tweet, username, created_at)
+                    writer.write_row(record)
+                    if self.record_callback:
+                        self.record_callback(record.copy())
                     rows_written += 1
                     page_added += 1
 
