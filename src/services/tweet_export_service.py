@@ -239,14 +239,17 @@ class TweetExportService:
                 progress_callback(payload)
 
         def fetch_progress(info: dict) -> None:
+            stage = str(info.get("stage") or "fetching")
+            page = info.get("page", 0)
+            message = info.get("message") or f"Đang lấy trang {page} từ X..."
             emit({
-                "stage": "fetching",
-                "page": info.get("page", 0),
+                "stage": stage,
+                "page": page,
                 "posts_fetched": info.get("total", len(records)),
                 "posts_translated": 0,
                 "posts_total": 0,
                 "translation_status": "pending",
-                "message": f"Đang lấy trang {info.get('page', 0)} từ X...",
+                "message": message,
             })
 
         def collect(record: dict) -> None:
