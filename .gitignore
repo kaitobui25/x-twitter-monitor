@@ -140,3 +140,5 @@ src/**/__pycache__/
 *.pyc
 
 follower/BangXBT/*
+.venv-export-test/
+.chrome-debug/
