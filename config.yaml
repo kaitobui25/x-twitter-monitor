@@ -1,0 +1,22 @@
+# X Monitor web settings.
+# Paths are relative to this repository root unless absolute.
+
+web:
+  host: 127.0.0.1
+  port: 8766
+  open_browser: true
+
+x:
+  monitor_config: config/config.json
+  cookies_dir: cookies
+
+translation:
+  # auto     = translate when API keys exist; otherwise skip translation.
+  # off      = never translate.
+  # required = fail export when no API key is configured.
+  mode: auto
+  provider: gemini
+  model: gemini-2.5-flash-lite
+  batch_size: 20
+  max_attempts_per_batch: 3
+  gemini_api_keys: []

@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>X Monitor — Export Posts</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <main class="page-shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">X MONITOR</p>
+        <h1>Xuất bài đăng X</h1>
+        <p class="hero-copy">Lấy lịch sử bài đăng theo khoảng ngày, dịch sang tiếng Việt và tải CSV.</p>
+      </div>
+      <div id="serverStatus" class="status-pill"><span class="status-dot"></span><span>Đang kiểm tra</span></div>
+    </header>
+
+    <section class="panel export-panel" aria-labelledby="exportTitle">
+      <div class="section-heading">
+        <div>
+          <p class="section-kicker">01 · EXPORT</p>
+          <h2 id="exportTitle">Chọn tài khoản và khoảng thời gian</h2>
+        </div>
+      </div>
+
+      <form id="exportForm" class="export-form" autocomplete="off">
+        <label class="field username-field">
+          <span>Tài khoản X</span>
+          <div class="username-input-wrap">
+            <span class="at-prefix">@</span>
+            <input id="username" name="username" type="text" maxlength="16" placeholder="DaanCrypto" required spellcheck="false">
+          </div>
+        </label>
+
+        <label class="field">
+          <span>Từ ngày</span>
+          <input id="startDate" name="start_date" type="date" required>
+        </label>
+
+        <label class="field">
+          <span>Đến ngày</span>
+          <input id="endDate" name="end_date" type="date" required>
+        </label>
+
+        <button id="exportButton" class="export-button" type="submit">
+          <span class="button-label">Xuất bài đăng</span>
+        </button>
+      </form>
+
+      <div id="jobStatus" class="job-status" hidden>
+        <div class="job-status-row">
+          <span id="stageBadge" class="stage-badge">QUEUED</span>
+          <span id="jobMessage" class="job-message">Đang chuẩn bị...</span>
+        </div>
+        <div class="progress-track" aria-hidden="true"><div id="progressBar" class="progress-bar"></div></div>
+        <div class="progress-meta">
+          <span id="pageCount">Trang: 0</span>
+          <span id="fetchCount">Đã lấy: 0</span>
+          <span id="translateCount">Đã dịch: 0</span>
+        </div>
+      </div>
+
+      <div id="errorBox" class="error-box" hidden></div>
+    </section>
+
+    <section id="resultPanel" class="panel result-panel" aria-labelledby="resultTitle" hidden>
+      <div class="section-heading result-heading">
+        <div>
+          <p class="section-kicker">02 · PREVIEW</p>
+          <h2 id="resultTitle">Kết quả</h2>
+          <p id="resultSummary" class="result-summary"></p>
+        </div>
+        <a id="downloadCsv" class="download-button" href="#" download>Tải CSV</a>
+      </div>
+
+      <div id="previewEmpty" class="empty-state" hidden>Không có bài đăng trong khoảng thời gian đã chọn.</div>
+      <div id="previewList" class="preview-list"></div>
+    </section>
+  </main>
+</body>
+</html>

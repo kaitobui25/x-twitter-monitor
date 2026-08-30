@@ -9,3 +9,4 @@ setuptools
 google-genai
 Pillow
 playwright>=1.40.0
+PyYAML>=6.0

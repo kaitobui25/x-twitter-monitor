@@ -1,13 +1,16 @@
+import math
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from html import unescape
 from typing import Callable, Iterator
 
-from src.core.watcher import TwitterWatcher
+from src.core.watcher import RateLimitError, TwitterWatcher
 from src.exporters.csv_writer import CsvWriter
 
 
 TWITTER_DATE_FORMAT = '%a %b %d %H:%M:%S %z %Y'
+RATE_LIMIT_RETRY_BUFFER_SECONDS = 1
 
 
 class ExportError(RuntimeError):
@@ -145,10 +148,6 @@ def _is_reply(tweet: dict) -> bool:
     legacy = tweet.get('legacy', {})
     tweet_id = str(tweet.get('rest_id') or legacy.get('id_str') or '')
     conversation_id = str(legacy.get('conversation_id_str') or '')
-
-    # Some SearchTimeline responses omit in_reply_to_* fields. A reply still
-    # belongs to the root conversation, so its conversation ID differs from
-    # its own tweet ID. This is more reliable than checking for a leading @.
     return bool(tweet_id and conversation_id and conversation_id != tweet_id)
 
 
@@ -201,10 +200,16 @@ class TweetHistoryExporter:
         watcher: TwitterWatcher,
         page_size: int = 20,
         progress_callback: Callable[[dict], None] | None = None,
+        record_callback: Callable[[dict], None] | None = None,
+        clock: Callable[[], float] | None = None,
+        sleep: Callable[[float], None] | None = None,
     ):
         self.watcher = watcher
         self.page_size = page_size
         self.progress_callback = progress_callback
+        self.record_callback = record_callback
+        self.clock = clock or time.time
+        self.sleep = sleep or time.sleep
 
     def _resolve_user_id(self, username: str) -> str:
         data = self.watcher.get_user_by_username(username)
@@ -215,6 +220,53 @@ class TweetHistoryExporter:
         if not user_id:
             raise ExportError(f'Cannot find X.com user: {username}')
         return str(user_id)
+
+    @staticmethod
+    def _format_countdown(seconds: int) -> str:
+        minutes, remaining_seconds = divmod(max(0, seconds), 60)
+        return f'{minutes:02d}:{remaining_seconds:02d}'
+
+    def _wait_for_rate_limit(
+        self,
+        error: RateLimitError,
+        pages_fetched: int,
+        rows_written: int,
+    ) -> None:
+        retry_at = max(
+            float(error.reset_at + RATE_LIMIT_RETRY_BUFFER_SECONDS),
+            self.clock() + 1,
+        )
+
+        while True:
+            remaining = max(0, math.ceil(retry_at - self.clock()))
+            if self.progress_callback:
+                self.progress_callback({
+                    'stage': 'rate_limited',
+                    'page': pages_fetched,
+                    'total': rows_written,
+                    'rate_limit_reset_at': error.reset_at,
+                    'rate_limit_remaining_seconds': remaining,
+                    'message': (
+                        'X đang giới hạn request. Tự tiếp tục sau {}.'.format(
+                            self._format_countdown(remaining)
+                        )
+                    ),
+                })
+            if remaining <= 0:
+                break
+            self.sleep(min(1, remaining))
+
+        if self.progress_callback:
+            self.progress_callback({
+                'stage': 'fetching',
+                'page': pages_fetched,
+                'total': rows_written,
+                'message': (
+                    'Rate limit đã reset; đang thử lại trang {}...'.format(
+                        pages_fetched + 1
+                    )
+                ),
+            })
 
     def export(
         self,
@@ -258,7 +310,21 @@ class TweetHistoryExporter:
                 if cursor:
                     variables['cursor'] = cursor
 
-                data = self.watcher.query('SearchTimeline', variables)
+                while True:
+                    try:
+                        data = self.watcher.query(
+                            'SearchTimeline',
+                            variables,
+                            raise_rate_limit=True,
+                        )
+                        break
+                    except RateLimitError as error:
+                        self._wait_for_rate_limit(
+                            error,
+                            pages_fetched=pages_fetched,
+                            rows_written=rows_written,
+                        )
+
                 if data is None:
                     raise ExportError(
                         f'Failed to fetch SearchTimeline page {pages_fetched + 1}.'
@@ -294,7 +360,10 @@ class TweetHistoryExporter:
                         continue
 
                     seen_tweet_ids.add(tweet_id)
-                    writer.write_row(_record_from_tweet(tweet, username, created_at))
+                    record = _record_from_tweet(tweet, username, created_at)
+                    writer.write_row(record)
+                    if self.record_callback:
+                        self.record_callback(record.copy())
                     rows_written += 1
                     page_added += 1
 
@@ -303,11 +372,13 @@ class TweetHistoryExporter:
 
                 if self.progress_callback:
                     self.progress_callback({
+                        'stage': 'fetching',
                         'page': pages_fetched,
                         'added': page_added,
                         'total': rows_written,
                         'newest': page_newest,
                         'oldest': page_oldest,
+                        'message': f'Đã lấy trang {pages_fetched} từ X.',
                     })
 
                 if page_oldest and page_oldest < start_dt:
