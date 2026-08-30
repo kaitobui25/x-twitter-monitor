@@ -11,11 +11,11 @@ from typing import Callable
 
 from src.core.watcher import TwitterWatcher
 from src.exporters.tweet_history import ExportError, TweetHistoryExporter
+from src.services.translation_config import TranslationSettings
 from src.services.translator import (
     GeminiVietnameseTranslator,
     TranslationError,
     Translator,
-    normalize_api_keys,
 )
 
 
@@ -50,6 +50,8 @@ class ServiceExportResult:
     pages_fetched: int
     rows_written: int
     stop_reason: str
+    translation_status: str
+    translated_count: int
 
 
 def sanitize_username(value: str) -> str:
@@ -87,14 +89,14 @@ def _strip_comments(obj: object) -> object:
     return obj
 
 
-def _load_config(path: Path) -> dict:
+def _load_monitor_config(path: Path) -> dict:
     if not path.is_file():
         return {}
     try:
         with path.open("r", encoding="utf-8") as handle:
             data = json.load(handle)
     except (OSError, json.JSONDecodeError) as exc:
-        raise ExportServiceError(f"Cannot read config: {exc}") from exc
+        raise ExportServiceError(f"Cannot read monitor config: {exc}") from exc
     cleaned = _strip_comments(data)
     return cleaned if isinstance(cleaned, dict) else {}
 
@@ -103,19 +105,34 @@ class TweetExportService:
     def __init__(
         self,
         root: str | os.PathLike[str],
-        config_path: str | os.PathLike[str] | None = None,
+        monitor_config_path: str | os.PathLike[str] | None = None,
         cookies_dir: str | os.PathLike[str] | None = None,
+        translation_settings: TranslationSettings | None = None,
         watcher_factory: Callable[[list[str], str], object] | None = None,
         exporter_factory: Callable[[object, Callable[[dict], None], Callable[[dict], None]], object] | None = None,
-        translator_factory: Callable[[dict], Translator] | None = None,
+        translator_factory: Callable[[TranslationSettings], Translator] | None = None,
     ) -> None:
         self.root = Path(root).resolve()
-        self.config_path = (
-            Path(config_path).resolve()
-            if config_path is not None
-            else self.root / "config" / "config.json"
-        )
-        self.cookies_dir_override = Path(cookies_dir).resolve() if cookies_dir else None
+        if monitor_config_path is None:
+            self.monitor_config_path = self.root / "config" / "config.json"
+        else:
+            config_path = Path(monitor_config_path)
+            self.monitor_config_path = (
+                config_path.resolve()
+                if config_path.is_absolute()
+                else (self.root / config_path).resolve()
+            )
+
+        if cookies_dir is None:
+            self.cookies_dir_override = None
+        else:
+            cookie_path = Path(cookies_dir)
+            self.cookies_dir_override = (
+                cookie_path.resolve()
+                if cookie_path.is_absolute()
+                else (self.root / cookie_path).resolve()
+            )
+        self.translation_settings = translation_settings or TranslationSettings()
         self.watcher_factory = watcher_factory or (
             lambda auth_usernames, cookie_path: TwitterWatcher(auth_usernames, cookie_path)
         )
@@ -131,23 +148,25 @@ class TweetExportService:
         )
 
     @staticmethod
-    def _default_translator_factory(config: dict) -> Translator:
-        keys = normalize_api_keys(config.get("gemini_api_keys", {}))
-        advanced = config.get("advanced", {}) if isinstance(config.get("advanced"), dict) else {}
-        model = str(
-            advanced.get("gemini_translation_model")
-            or config.get("gemini_translation_model")
-            or "gemini-2.5-flash-lite"
+    def _default_translator_factory(settings: TranslationSettings) -> Translator:
+        return GeminiVietnameseTranslator(
+            settings.api_keys,
+            model=settings.model,
+            batch_size=settings.batch_size,
+            max_attempts_per_batch=settings.max_attempts_per_batch,
         )
-        return GeminiVietnameseTranslator(keys, model=model)
 
-    def _runtime(self) -> tuple[dict, str, list[str]]:
-        config = _load_config(self.config_path)
-        advanced = config.get("advanced", {}) if isinstance(config.get("advanced"), dict) else {}
+    def _runtime(self) -> tuple[str, list[str]]:
+        config = _load_monitor_config(self.monitor_config_path)
 
         if self.cookies_dir_override is not None:
             cookies_dir = self.cookies_dir_override
         else:
+            advanced = (
+                config.get("advanced", {})
+                if isinstance(config.get("advanced"), dict)
+                else {}
+            )
             configured = advanced.get("cookies_dir")
             if configured:
                 path = Path(str(configured))
@@ -176,7 +195,19 @@ class TweetExportService:
         if not auth_usernames:
             raise ExportServiceError("No X auth cookie JSON files found.")
 
-        return config, str(cookies_dir), auth_usernames
+        return str(cookies_dir), auth_usernames
+
+    def _translator_for_export(self) -> tuple[str, Translator | None]:
+        settings = self.translation_settings
+        if settings.mode == "off":
+            return "disabled", None
+        if not settings.has_api_key:
+            if settings.mode == "required":
+                raise TranslationError(
+                    "No Gemini API key configured for Vietnamese translation."
+                )
+            return "skipped_no_key", None
+        return "translated", self.translator_factory(settings)
 
     @staticmethod
     def _write_final_csv(path: Path, records: list[dict]) -> None:
@@ -196,7 +227,7 @@ class TweetExportService:
     ) -> ServiceExportResult:
         username = sanitize_username(username)
         start_dt, end_exclusive = parse_inclusive_date_range(start_date, end_date)
-        config, cookies_dir, auth_usernames = self._runtime()
+        cookies_dir, auth_usernames = self._runtime()
 
         output_dir = self.root / "exports" / username
         final_path = output_dir / f"{username}_{start_date}_{end_date}.csv"
@@ -214,6 +245,7 @@ class TweetExportService:
                 "posts_fetched": info.get("total", len(records)),
                 "posts_translated": 0,
                 "posts_total": 0,
+                "translation_status": "pending",
                 "message": f"Đang lấy trang {info.get('page', 0)} từ X...",
             })
 
@@ -229,9 +261,13 @@ class TweetExportService:
             "posts_fetched": 0,
             "posts_translated": 0,
             "posts_total": 0,
+            "translation_status": "pending",
             "message": "Đang kết nối X và lấy bài đăng...",
         })
 
+        result = None
+        translation_status = "not_needed"
+        translated_count = 0
         try:
             result = exporter.export(
                 username=username,
@@ -242,46 +278,80 @@ class TweetExportService:
 
             records.sort(key=lambda item: str(item.get("created_at", "")), reverse=True)
             total = len(records)
-            if total:
-                emit({
-                    "stage": "translating",
-                    "page": result.pages_fetched,
-                    "posts_fetched": total,
-                    "posts_translated": 0,
-                    "posts_total": total,
-                    "message": f"Đang dịch 0/{total} bài sang tiếng Việt...",
-                })
-                translator = self.translator_factory(config)
 
-                def translation_progress(done: int, count: int) -> None:
+            if total:
+                translation_status, translator = self._translator_for_export()
+                if translator is None:
+                    for record in records:
+                        record["text_vi"] = ""
+                    if translation_status == "disabled":
+                        message = "Đã tắt dịch tiếng Việt; đang ghi CSV..."
+                    else:
+                        message = (
+                            "Chưa có Gemini API key; bỏ qua dịch và đang ghi CSV..."
+                        )
+                    emit({
+                        "stage": "writing",
+                        "page": result.pages_fetched,
+                        "posts_fetched": total,
+                        "posts_translated": 0,
+                        "posts_total": total,
+                        "translation_status": translation_status,
+                        "message": message,
+                    })
+                else:
                     emit({
                         "stage": "translating",
                         "page": result.pages_fetched,
                         "posts_fetched": total,
-                        "posts_translated": done,
-                        "posts_total": count,
-                        "message": f"Đang dịch {done}/{count} bài sang tiếng Việt...",
+                        "posts_translated": 0,
+                        "posts_total": total,
+                        "translation_status": "translating",
+                        "message": f"Đang dịch 0/{total} bài sang tiếng Việt...",
                     })
 
-                translated = translator.translate_many(
-                    [str(record.get("text", "")) for record in records],
-                    progress_callback=translation_progress,
-                )
-                if len(translated) != total:
-                    raise ExportServiceError("Translation result count mismatch.")
-                for record, text_vi in zip(records, translated):
-                    record["text_vi"] = text_vi
-            else:
-                translated = []
+                    def translation_progress(done: int, count: int) -> None:
+                        emit({
+                            "stage": "translating",
+                            "page": result.pages_fetched,
+                            "posts_fetched": total,
+                            "posts_translated": done,
+                            "posts_total": count,
+                            "translation_status": "translating",
+                            "message": f"Đang dịch {done}/{count} bài sang tiếng Việt...",
+                        })
 
-            emit({
-                "stage": "writing",
-                "page": result.pages_fetched,
-                "posts_fetched": total,
-                "posts_translated": len(translated),
-                "posts_total": total,
-                "message": "Đang ghi CSV...",
-            })
+                    translated = translator.translate_many(
+                        [str(record.get("text", "")) for record in records],
+                        progress_callback=translation_progress,
+                    )
+                    if len(translated) != total:
+                        raise ExportServiceError("Translation result count mismatch.")
+                    for record, text_vi in zip(records, translated):
+                        record["text_vi"] = text_vi
+                    translated_count = len(translated)
+                    translation_status = "translated"
+
+                    emit({
+                        "stage": "writing",
+                        "page": result.pages_fetched,
+                        "posts_fetched": total,
+                        "posts_translated": translated_count,
+                        "posts_total": total,
+                        "translation_status": translation_status,
+                        "message": "Đang ghi CSV...",
+                    })
+            else:
+                emit({
+                    "stage": "writing",
+                    "page": result.pages_fetched,
+                    "posts_fetched": 0,
+                    "posts_translated": 0,
+                    "posts_total": 0,
+                    "translation_status": translation_status,
+                    "message": "Không có bài trong khoảng ngày; đang ghi CSV rỗng...",
+                })
+
             self._write_final_csv(final_path, records)
         except (ExportError, TranslationError, ExportServiceError):
             raise
@@ -293,6 +363,9 @@ class TweetExportService:
             except OSError:
                 pass
 
+        if result is None:
+            raise ExportServiceError("Export did not return a result.")
+
         return ServiceExportResult(
             username=username,
             start_date=start_date,
@@ -302,4 +375,6 @@ class TweetExportService:
             pages_fetched=result.pages_fetched,
             rows_written=len(records),
             stop_reason=result.stop_reason,
+            translation_status=translation_status,
+            translated_count=translated_count,
         )

@@ -7,6 +7,8 @@ from typing import Protocol
 
 from google import genai
 
+from src.services.translation_config import normalize_api_keys
+
 
 class TranslationError(RuntimeError):
     pass
@@ -19,24 +21,6 @@ class Translator(Protocol):
         progress_callback: Callable[[int, int], None] | None = None,
     ) -> list[str]:
         ...
-
-
-def normalize_api_keys(raw: object) -> list[str]:
-    if isinstance(raw, dict):
-        values = [raw[key] for key in sorted(raw)]
-    elif isinstance(raw, (list, tuple)):
-        values = list(raw)
-    elif isinstance(raw, str):
-        values = [raw]
-    else:
-        values = []
-
-    result = []
-    for value in values:
-        key = str(value).strip()
-        if key:
-            result.append(key)
-    return result
 
 
 def _extract_json_array(text: str) -> list[str]:

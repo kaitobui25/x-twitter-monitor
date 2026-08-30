@@ -4,6 +4,8 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from src.services.translation_config import TranslationSettings
+from src.services.translator import TranslationError
 from src.services.tweet_export_service import (
     TweetExportService,
     parse_inclusive_date_range,
@@ -45,6 +47,27 @@ class _FakeExporter:
         )
 
 
+def _records():
+    return [
+        {
+            "tweet_id": "2",
+            "username": "DaanCrypto",
+            "created_at": "2026-08-30T10:00:00+00:00",
+            "text": "second",
+            "url": "https://x.com/DaanCrypto/status/2",
+            "post_type": "tweet",
+        },
+        {
+            "tweet_id": "1",
+            "username": "DaanCrypto",
+            "created_at": "2026-08-29T10:00:00+00:00",
+            "text": "first",
+            "url": "https://x.com/DaanCrypto/status/1",
+            "post_type": "reply",
+        },
+    ]
+
+
 class TweetExportServiceTests(unittest.TestCase):
     def test_username_sanitization_and_validation(self):
         self.assertEqual(sanitize_username("  @DaanCrypto "), "DaanCrypto")
@@ -60,38 +83,32 @@ class TweetExportServiceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_inclusive_date_range("2026-09-01", "2026-08-30")
 
+    def _service(self, root, records, translation_settings=None, translator_factory=None):
+        cookies = root / "cookies"
+        cookies.mkdir(exist_ok=True)
+        (cookies / "authuser.json").write_text("{}", encoding="utf-8")
+        return TweetExportService(
+            root,
+            cookies_dir=cookies,
+            translation_settings=translation_settings,
+            watcher_factory=lambda users, cookie_dir: object(),
+            exporter_factory=lambda watcher, progress, record: _FakeExporter(
+                progress, record, records
+            ),
+            translator_factory=translator_factory,
+        )
+
     def test_export_collects_translates_and_writes_final_csv(self):
-        records = [
-            {
-                "tweet_id": "2",
-                "username": "DaanCrypto",
-                "created_at": "2026-08-30T10:00:00+00:00",
-                "text": "second",
-                "url": "https://x.com/DaanCrypto/status/2",
-                "post_type": "tweet",
-            },
-            {
-                "tweet_id": "1",
-                "username": "DaanCrypto",
-                "created_at": "2026-08-29T10:00:00+00:00",
-                "text": "first",
-                "url": "https://x.com/DaanCrypto/status/1",
-                "post_type": "reply",
-            },
-        ]
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            cookies = root / "cookies"
-            cookies.mkdir()
-            (cookies / "authuser.json").write_text("{}", encoding="utf-8")
-
-            service = TweetExportService(
+            service = self._service(
                 root,
-                watcher_factory=lambda users, cookie_dir: object(),
-                exporter_factory=lambda watcher, progress, record: _FakeExporter(
-                    progress, record, records
+                _records(),
+                translation_settings=TranslationSettings(
+                    mode="required",
+                    api_keys=("fake-key",),
                 ),
-                translator_factory=lambda config: _FakeTranslator(),
+                translator_factory=lambda settings: _FakeTranslator(),
             )
             progress = []
             result = service.export(
@@ -102,6 +119,8 @@ class TweetExportServiceTests(unittest.TestCase):
             )
 
             self.assertEqual(result.rows_written, 2)
+            self.assertEqual(result.translation_status, "translated")
+            self.assertEqual(result.translated_count, 2)
             self.assertEqual(result.records[0]["tweet_id"], "2")
             self.assertEqual(result.records[0]["text_vi"], "VI: second")
             final_path = Path(result.csv_path)
@@ -115,22 +134,61 @@ class TweetExportServiceTests(unittest.TestCase):
             self.assertIn("translating", [item.get("stage") for item in progress])
             self.assertEqual(progress[-1]["stage"], "writing")
 
+    def test_auto_mode_without_key_skips_translation_and_still_exports(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = self._service(
+                root,
+                _records(),
+                translation_settings=TranslationSettings(mode="auto"),
+                translator_factory=lambda settings: self.fail(
+                    "translator must not be created without a key"
+                ),
+            )
+            progress = []
+            result = service.export(
+                "DaanCrypto",
+                "2026-08-01",
+                "2026-08-30",
+                progress_callback=progress.append,
+            )
+
+            self.assertEqual(result.rows_written, 2)
+            self.assertEqual(result.translation_status, "skipped_no_key")
+            self.assertEqual(result.translated_count, 0)
+            self.assertEqual(result.records[0]["text_vi"], "")
+            self.assertEqual(progress[-1]["stage"], "writing")
+            self.assertEqual(progress[-1]["translation_status"], "skipped_no_key")
+
+            with open(result.csv_path, "r", encoding="utf-8-sig", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual(rows[0]["text_vi"], "")
+
+    def test_required_mode_without_key_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            service = self._service(
+                root,
+                _records(),
+                translation_settings=TranslationSettings(mode="required"),
+            )
+            with self.assertRaises(TranslationError):
+                service.export("DaanCrypto", "2026-08-01", "2026-08-30")
+
     def test_zero_posts_writes_header_without_building_translator(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            cookies = root / "cookies"
-            cookies.mkdir()
-            (cookies / "auth.json").write_text("{}", encoding="utf-8")
-            service = TweetExportService(
+            service = self._service(
                 root,
-                watcher_factory=lambda users, cookie_dir: object(),
-                exporter_factory=lambda watcher, progress, record: _FakeExporter(
-                    progress, record, []
+                [],
+                translation_settings=TranslationSettings(mode="required"),
+                translator_factory=lambda settings: self.fail(
+                    "translator should not be created"
                 ),
-                translator_factory=lambda config: self.fail("translator should not be created"),
             )
             result = service.export("user", "2026-08-01", "2026-08-01")
             self.assertEqual(result.rows_written, 0)
+            self.assertEqual(result.translation_status, "not_needed")
             with open(result.csv_path, "r", encoding="utf-8-sig") as handle:
                 header = handle.readline().strip()
             self.assertIn("text_vi", header)

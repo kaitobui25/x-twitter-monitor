@@ -47,6 +47,7 @@ class ExportJobManager:
                 "posts_fetched": 0,
                 "posts_translated": 0,
                 "posts_total": 0,
+                "translation_status": "pending",
                 "message": "Đã xếp hàng tác vụ xuất dữ liệu.",
                 "error": None,
                 "created_at": self._now(),
@@ -88,6 +89,7 @@ class ExportJobManager:
                     "posts_fetched",
                     "posts_translated",
                     "posts_total",
+                    "translation_status",
                     "message",
                 )
                 if key in info
@@ -112,6 +114,19 @@ class ExportJobManager:
         else:
             with self._lock:
                 self._results[job_id] = result
+
+            if result.translation_status == "skipped_no_key":
+                done_message = (
+                    f"Hoàn tất: {result.rows_written} bài đăng. "
+                    "Đã bỏ qua dịch vì chưa có Gemini API key."
+                )
+            elif result.translation_status == "disabled":
+                done_message = (
+                    f"Hoàn tất: {result.rows_written} bài đăng. Dịch tiếng Việt đang tắt."
+                )
+            else:
+                done_message = f"Hoàn tất: {result.rows_written} bài đăng."
+
             self._update(
                 job_id,
                 status="done",
@@ -119,12 +134,13 @@ class ExportJobManager:
                 page=result.pages_fetched,
                 pages_fetched=result.pages_fetched,
                 posts_fetched=result.rows_written,
-                posts_translated=result.rows_written,
+                posts_translated=result.translated_count,
                 posts_total=result.rows_written,
+                translation_status=result.translation_status,
                 rows_written=result.rows_written,
                 stop_reason=result.stop_reason,
                 csv_url=f"/api/jobs/{job_id}/csv",
-                message=f"Hoàn tất: {result.rows_written} bài đăng.",
+                message=done_message,
             )
         finally:
             with self._lock:
@@ -162,6 +178,8 @@ class ExportJobManager:
                 "total": len(result.records),
                 "offset": offset,
                 "limit": limit,
+                "translation_status": result.translation_status,
+                "translated_count": result.translated_count,
                 "records": [dict(record) for record in records],
             }
 

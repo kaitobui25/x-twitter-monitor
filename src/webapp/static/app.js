@@ -116,15 +116,25 @@
     return 6;
   }
 
+  function translationStatusText(job) {
+    if (job.translation_status === "skipped_no_key") {
+      return "Dịch: bỏ qua (chưa có key)";
+    }
+    if (job.translation_status === "disabled") {
+      return "Dịch: đang tắt";
+    }
+    const translated = job.posts_translated || 0;
+    const total = job.posts_total || 0;
+    return total ? `Đã dịch: ${translated}/${total}` : `Đã dịch: ${translated}`;
+  }
+
   function updateJobStatus(job) {
     els.jobStatus.hidden = false;
     els.stageBadge.textContent = String(job.stage || job.status || "queued").toUpperCase();
     els.jobMessage.textContent = job.message || "Đang xử lý...";
     els.pageCount.textContent = `Trang: ${job.page || 0}`;
     els.fetchCount.textContent = `Đã lấy: ${job.posts_fetched || 0}`;
-    const translated = job.posts_translated || 0;
-    const total = job.posts_total || 0;
-    els.translateCount.textContent = total ? `Đã dịch: ${translated}/${total}` : `Đã dịch: ${translated}`;
+    els.translateCount.textContent = translationStatusText(job);
     els.progressBar.style.width = `${progressPercent(job)}%`;
   }
 
@@ -205,7 +215,24 @@
     return block;
   }
 
-  function postCard(record) {
+  function translationPreview(record, translationStatus) {
+    if (record.text_vi) {
+      return copyBlock("Tiếng Việt", record.text_vi, "translation");
+    }
+    if (translationStatus === "skipped_no_key") {
+      return copyBlock(
+        "Tiếng Việt",
+        "Chưa dịch — chưa cấu hình Gemini API key.",
+        "translation",
+      );
+    }
+    if (translationStatus === "disabled") {
+      return copyBlock("Tiếng Việt", "Chưa dịch — translation đang tắt.", "translation");
+    }
+    return copyBlock("Tiếng Việt", "", "translation");
+  }
+
+  function postCard(record, translationStatus) {
     const card = document.createElement("article");
     card.className = "post-card";
     const parts = dateParts(record.created_at);
@@ -229,13 +256,13 @@
     card.append(
       meta,
       copyBlock("Original", record.text || ""),
-      copyBlock("Tiếng Việt", record.text_vi || "", "translation"),
+      translationPreview(record, translationStatus),
       link,
     );
     return card;
   }
 
-  function renderRecords(records) {
+  function renderRecords(records, translationStatus) {
     els.previewList.replaceChildren();
     els.previewEmpty.hidden = records.length !== 0;
     if (!records.length) return;
@@ -258,7 +285,9 @@
       heading.className = "day-heading";
       heading.textContent = `${group.heading} · ${group.records.length} bài`;
       section.appendChild(heading);
-      group.records.forEach((record) => section.appendChild(postCard(record)));
+      group.records.forEach((record) => {
+        section.appendChild(postCard(record, translationStatus));
+      });
       els.previewList.appendChild(section);
     });
   }
@@ -269,10 +298,18 @@
     const total = result.total || 0;
     els.resultPanel.hidden = false;
     els.downloadCsv.href = job.csv_url || `/api/jobs/${encodeURIComponent(job.id)}/csv`;
+
+    let translationNote = "";
+    if (result.translation_status === "skipped_no_key") {
+      translationNote = " · chưa dịch (chưa có Gemini key)";
+    } else if (result.translation_status === "disabled") {
+      translationNote = " · dịch đang tắt";
+    }
+
     els.resultSummary.textContent = shown < total
-      ? `${total} bài · đang hiển thị sơ bộ ${shown} bài mới nhất`
-      : `${total} bài · ${job.pages_fetched || job.page || 0} trang dữ liệu`;
-    renderRecords(result.records || []);
+      ? `${total} bài · đang hiển thị sơ bộ ${shown} bài mới nhất${translationNote}`
+      : `${total} bài · ${job.pages_fetched || job.page || 0} trang dữ liệu${translationNote}`;
+    renderRecords(result.records || [], result.translation_status);
     els.resultPanel.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 

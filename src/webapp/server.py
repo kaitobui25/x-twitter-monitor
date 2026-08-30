@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from src.services.tweet_export_service import TweetExportService
+from src.webapp.config import AppSettings, load_app_settings
 from src.webapp.jobs import ExportJobManager
 
 
@@ -25,16 +26,21 @@ class WebApplication:
     def __init__(
         self,
         root: Path,
-        config_path: Path | None = None,
+        settings: AppSettings | None = None,
+        monitor_config_path: Path | None = None,
         cookies_dir: Path | None = None,
         jobs: ExportJobManager | None = None,
     ) -> None:
         self.root = root.resolve()
+        self.settings = settings or load_app_settings(self.root)
         if jobs is None:
             service = TweetExportService(
                 self.root,
-                config_path=config_path,
-                cookies_dir=cookies_dir,
+                monitor_config_path=(
+                    monitor_config_path or self.settings.x.monitor_config
+                ),
+                cookies_dir=(cookies_dir or self.settings.x.cookies_dir),
+                translation_settings=self.settings.translation,
             )
             jobs = ExportJobManager(service)
         self.jobs = jobs
@@ -54,7 +60,7 @@ def _parse_int(query: dict[str, list[str]], name: str, default: int) -> int:
 
 def build_handler(app: WebApplication) -> type[BaseHTTPRequestHandler]:
     class XMonitorHandler(BaseHTTPRequestHandler):
-        server_version = "x-monitor-web/1.0"
+        server_version = "x-monitor-web/1.1"
 
         def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
             parsed = urlparse(self.path)
@@ -73,7 +79,12 @@ def build_handler(app: WebApplication) -> type[BaseHTTPRequestHandler]:
                     self._send_file(path, content_type)
                     return
                 if parsed.path == "/api/health":
-                    self._send_json({"ok": True, "active_job": app.jobs.active()})
+                    self._send_json({
+                        "ok": True,
+                        "active_job": app.jobs.active(),
+                        "translation_mode": app.settings.translation.mode,
+                        "translation_has_key": app.settings.translation.has_api_key,
+                    })
                     return
 
                 job_route = self._job_route(parsed.path)
@@ -214,31 +225,57 @@ def build_handler(app: WebApplication) -> type[BaseHTTPRequestHandler]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="x-monitor-web",
-        description="Local dark web UI for exporting historical X posts to translated CSV.",
+        description="Local dark web UI for exporting historical X posts to CSV.",
     )
     parser.add_argument("--root", type=Path, default=Path.cwd())
-    parser.add_argument("--config", type=Path, default=None)
+    parser.add_argument(
+        "--settings",
+        type=Path,
+        default=None,
+        help="Path to root web settings YAML. Default: <root>/config.yaml",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="Optional override for the existing monitor config JSON.",
+    )
     parser.add_argument("--cookies", type=Path, default=None)
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8766)
+    parser.add_argument("--host", default=None)
+    parser.add_argument("--port", type=int, default=None)
     parser.add_argument("--no-browser", action="store_true")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if not 1 <= args.port <= 65535:
+    settings = load_app_settings(args.root, args.settings)
+
+    host = args.host or settings.web.host
+    port = args.port if args.port is not None else settings.web.port
+    if not 1 <= port <= 65535:
         raise SystemExit("error: --port must be between 1 and 65535")
 
-    app = WebApplication(args.root, config_path=args.config, cookies_dir=args.cookies)
-    server = XMonitorHTTPServer((args.host, args.port), build_handler(app))
-    url = f"http://{args.host}:{args.port}"
+    app = WebApplication(
+        args.root,
+        settings=settings,
+        monitor_config_path=args.config,
+        cookies_dir=args.cookies,
+    )
+    server = XMonitorHTTPServer((host, port), build_handler(app))
+    url = f"http://{host}:{port}"
 
     print(f"x-monitor web: {url}")
     print(f"root: {app.root}")
+    print(f"settings: {settings.source_path}")
+    if settings.translation.mode == "auto" and not settings.translation.has_api_key:
+        print("translation: skipped (no Gemini API key; mode=auto)")
+    else:
+        print(f"translation: {settings.translation.mode}")
     print("Press Ctrl+C to stop.")
 
-    if not args.no_browser:
+    should_open_browser = settings.web.open_browser and not args.no_browser
+    if should_open_browser:
         threading.Timer(0.4, lambda: webbrowser.open(url)).start()
 
     try:
