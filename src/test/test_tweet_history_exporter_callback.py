@@ -10,9 +10,10 @@ class _Watcher:
     def get_user_by_username(self, username):
         return {"data": {"user": {"result": {"rest_id": "42"}}}}
 
-    def query(self, operation, variables):
+    def query(self, operation, variables, *, raise_rate_limit=False):
         self.operation = operation
         self.variables = variables
+        self.raise_rate_limit = raise_rate_limit
         return {
             "data": {
                 "search_by_raw_query": {
@@ -69,6 +70,7 @@ class TweetHistoryExporterCallbackTests(unittest.TestCase):
         self.assertEqual(records[0]["text"], "Hello & world")
         self.assertEqual(records[0]["post_type"], "tweet")
         self.assertEqual(watcher.operation, "SearchTimeline")
+        self.assertTrue(watcher.raise_rate_limit)
 
 
 if __name__ == "__main__":
